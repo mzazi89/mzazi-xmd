@@ -74,13 +74,26 @@ const staticConfig = {
     UNLIMITED: { name: "Unlimited",        maxDevices: 999, price: 250, days: 30 },
   },
 
+  // ─── Visual identity — see lib/theme.js ──────────────────────────────────────
+  // `accentColor` is the ONE value the whole look derives from: the badge emoji,
+  // the gradient partner, the card background, the glow, and the divider drawn on
+  // generated cards. It is read by lib/theme.js.
+  //
+  // MZAZI XMD is the ELECTRIC BLUE bot: blue accents, blue-dark cards, a blue
+  // badge, and rounded banner corners (╭──╮) instead of QUARTZ XD's double-line
+  // boxes (╔══╗). That combination is what makes the two bots tellable apart at a
+  // glance in the same chat, while both still serve the same command set.
   theme: {
     name: "MZAZI TECH XMD BOT",
     mode: "DARK",
     primaryColor: "#7C3AED",
     secondaryColor: "#FFFFFF",
     backgroundColor: "#0A0A0F",
-    accentColor: "#2563EB"
+    accentColor: "#2563EB",              // electric blue
+    accentColor2: "#60A5FA",             // gradient partner on generated cards
+    cardBg: ["#050f24", "#0d2360", "#050f24"],
+    badge: "🔵",                         // emoji signature on every reply footer
+    bannerStyle: "rounded"               // ╭──╮ instead of ╔══╗
   },
 
   fonts: {
