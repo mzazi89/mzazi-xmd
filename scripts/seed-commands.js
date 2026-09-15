@@ -14,8 +14,10 @@
 // "Command error: Unexpected token". Compiling every body here turns that into a
 // build-time failure instead. It is the single most valuable check in this file.
 //
-// It also refuses duplicates BY NAME, because `bot_commands.name` is UNIQUE and
-// the upsert would otherwise silently overwrite one command with another.
+// It also refuses duplicates BY NAME within this pack, because a name may only
+// appear once per profile: `bot_commands` is unique on (profile, name), so two
+// entries of the same name would silently overwrite one another. A same-named
+// command owned by another bot (a different profile) is fine.
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -159,51 +161,36 @@ async function main() {
   const { prisma, ensureTables } = require('../lib/botDb.js');
   await ensureTables();
 
-  let inserted = 0;
-  let updated = 0;
+  let written = 0;
 
   for (const c of commands) {
-    const row = await prisma.$queryRawUnsafe(
-      `SELECT id, profile FROM bot_commands WHERE name = $1`,
-      c.name
-    );
-
-    if (row.length && row[0].profile && row[0].profile !== PROFILE) {
-      // Someone else's command with this name. Upserting would take it away from
-      // them, so refuse loudly rather than winning quietly.
-      console.error(
-        `  ✗ ${c.name} already exists under profile "${row[0].profile}" — skipping`
-      );
-      process.exitCode = 1;
-      continue;
-    }
-
     const aliases = JSON.stringify(Array.isArray(c.aliases) ? c.aliases : []);
 
-    if (row.length) {
-      await prisma.$executeRawUnsafe(
-        `UPDATE bot_commands
-            SET aliases = $1::jsonb, description = $2, category = $3, usage = $4,
-                owner_only = $5, admin_only = $6, group_only = $7, code = $8,
-                profile = $9, updated_at = CURRENT_TIMESTAMP
-          WHERE name = $10`,
-        aliases, c.description || '', c.category || 'General', c.usage || '',
-        !!c.ownerOnly, !!c.adminOnly, !!c.groupOnly, c.code, PROFILE, c.name
-      );
-      updated++;
-    } else {
-      await prisma.$executeRawUnsafe(
-        `INSERT INTO bot_commands
-           (name, aliases, description, category, usage, owner_only, admin_only, group_only, enabled, code, profile)
-         VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, true, $9, $10)`,
-        c.name, aliases, c.description || '', c.category || 'General', c.usage || '',
-        !!c.ownerOnly, !!c.adminOnly, !!c.groupOnly, c.code, PROFILE
-      );
-      inserted++;
-    }
+    // Upsert scoped to (profile, name): `name` is no longer unique on its own,
+    // so re-running this over an existing database updates the xmd row in place
+    // instead of failing. A same-named row under a DIFFERENT profile is a
+    // separate command and is never touched.
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO bot_commands
+         (name, aliases, description, category, usage, owner_only, admin_only, group_only, enabled, code, profile)
+       VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, true, $9, $10)
+       ON CONFLICT (profile, name) DO UPDATE SET
+         aliases = EXCLUDED.aliases,
+         description = EXCLUDED.description,
+         category = EXCLUDED.category,
+         usage = EXCLUDED.usage,
+         owner_only = EXCLUDED.owner_only,
+         admin_only = EXCLUDED.admin_only,
+         group_only = EXCLUDED.group_only,
+         code = EXCLUDED.code,
+         updated_at = CURRENT_TIMESTAMP`,
+      c.name, aliases, c.description || '', c.category || 'General', c.usage || '',
+      !!c.ownerOnly, !!c.adminOnly, !!c.groupOnly, c.code, PROFILE
+    );
+    written++;
   }
 
-  console.log(`\nDone. ${inserted} inserted, ${updated} updated, all under profile "${PROFILE}".`);
+  console.log(`\nDone. ${written} command(s) upserted under profile "${PROFILE}".`);
   console.log('\nThe bot syncs automatically within ~15s, or run .synccmd to force it.');
   await prisma.$disconnect();
 }
