@@ -13,7 +13,8 @@
     "db:studio": "npx prisma studio",
     "postinstall": "npx prisma generate",
     "seed:commands": "node scripts/seed-commands.js",
-    "seed:commands:apply": "node scripts/seed-commands.js --apply"
+    "seed:commands:apply": "node scripts/seed-commands.js --apply",
+    "test:commands": "node scripts/test-commands.js"
   },
   "overrides": {
     "form-data": "^4.0.0"

@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// MZAZI XMD — command pack, part 1 of 4: TEXT, ENCODING, GENERATORS
+// MZAZI XMD — command pack, part 1 of 8: TEXT, ENCODING, GENERATORS
 //
 // Written against the real command context (see buildCommandContext in case.js).
 // Only wired values are used: mzazireply, args, prefix, command, axios, fs, path,

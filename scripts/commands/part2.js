@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// MZAZI XMD — command pack, part 2 of 4: CODES, GENERATORS, LINKS
+// MZAZI XMD — command pack, part 2 of 8: CODES, GENERATORS, LINKS
 //
 // Everything here is either pure JS (crypto via require, arithmetic, dates) or a
 // call to a long-standing public endpoint. Nothing depends on mzazi.shop, so

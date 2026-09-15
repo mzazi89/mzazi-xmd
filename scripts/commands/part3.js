@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// MZAZI XMD — command pack, part 3 of 4: IMAGES, STICKERS, AUDIO
+// MZAZI XMD — command pack, part 3 of 8: IMAGES, STICKERS, AUDIO
 //
 // These work on media the user sends WITH the command (or replies to), and use
 // ffmpeg through the `ffmpeg` binding already wired into the command context —

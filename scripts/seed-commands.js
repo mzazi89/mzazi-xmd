@@ -18,6 +18,16 @@
 // appear once per profile: `bot_commands` is unique on (profile, name), so two
 // entries of the same name would silently overwrite one another. A same-named
 // command owned by another bot (a different profile) is fine.
+//
+// Three further checks, each one for a mistake that is otherwise invisible
+// until it reaches a customer:
+//   1. duplicate aliases — the runtime resolves an alias to whichever command
+//      it meets first, so a second claim on the same alias never fires
+//   2. an alias that is also another command's name — names outrank aliases, so
+//      that alias is reachable only through the other command
+//   3. single backslashes in the part files — see validateRawFiles below; the
+//      escape is eaten by the template literal and the body quietly changes
+//      meaning while still compiling
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -51,11 +61,14 @@ const VALID_CATEGORIES = [
   'Text', 'Encoding', 'Links', 'Network', 'Files', 'Generators',
 ];
 
-function loadParts() {
+function partFiles() {
   if (!fs.existsSync(PARTS_DIR)) return [];
-  const files = fs.readdirSync(PARTS_DIR).filter((f) => f.endsWith('.js')).sort();
+  return fs.readdirSync(PARTS_DIR).filter((f) => f.endsWith('.js')).sort();
+}
+
+function loadParts() {
   const all = [];
-  for (const file of files) {
+  for (const file of partFiles()) {
     const full = path.join(PARTS_DIR, file);
     let mod;
     try {
@@ -69,9 +82,41 @@ function loadParts() {
   return all;
 }
 
+/**
+ * A backslash in these files is not a backslash yet — it is a backslash on its
+ * way through a template literal into a command body.
+ *
+ * `code: \`x.replace(/\\s+/g, '')\`` in the file becomes `x.replace(/\s+/g, '')`
+ * in the body. But `code: \`x.replace(/\s+/g, '')\`` (one backslash) becomes
+ * `x.replace(/s+/g, '')` — because an unknown escape inside a template literal
+ * collapses to the bare character. That version still compiles, so the body
+ * check above stays silent, and the command ships matching the letter "s"
+ * instead of whitespace. The same applies to \\d, \\w and friends.
+ *
+ * So: inside these files every backslash must be doubled. This is the only
+ * place that mistake can be caught.
+ */
+function validateRawFiles() {
+  const problems = [];
+  for (const file of partFiles()) {
+    const lines = fs.readFileSync(path.join(PARTS_DIR, file), 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (line.trim().startsWith('//')) return;
+      // Collapse every doubled backslash, then see what is left over.
+      if (line.replace(/\\\\/g, '').includes('\\')) {
+        problems.push(
+          `${file}:${i + 1}: single backslash — inside a body it must be doubled (write \\\\s, \\\\n, \\\\d …) or the escape is lost when the template literal is evaluated`
+        );
+      }
+    });
+  }
+  return problems;
+}
+
 function validate(commands) {
   const problems = [];
   const seen = new Map();
+  const seenAlias = new Map();
 
   for (const c of commands) {
     const where = `${c.__file} → ${c.name || '(no name)'}`;
@@ -86,10 +131,17 @@ function validate(commands) {
       else seen.set(c.name, c.__file);
     }
 
+    // Aliases are matched first-wins at run time (getRemoteCommand scans the
+    // synced list in order and returns the first hit), so a second command
+    // claiming an alias that is already taken is simply unreachable through that
+    // alias — and nothing anywhere reports it.
     if (Array.isArray(c.aliases)) {
       for (const a of c.aliases) {
-        if (!/^[a-z0-9_]{1,64}$/.test(String(a))) problems.push(`${where}: bad alias "${a}"`);
-        if (a === c.name) problems.push(`${where}: alias duplicates its own name`);
+        const alias = String(a);
+        if (!/^[a-z0-9_]{1,64}$/.test(alias)) problems.push(`${where}: bad alias "${a}"`);
+        if (alias === c.name) problems.push(`${where}: alias duplicates its own name`);
+        if (seenAlias.has(alias)) problems.push(`${where}: duplicate alias "${alias}", already used by ${seenAlias.get(alias)}`);
+        else seenAlias.set(alias, c.name || c.__file);
       }
     }
 
@@ -108,6 +160,18 @@ function validate(commands) {
       }
     }
   }
+
+  // A name outranks every alias in the runtime lookup, so an alias that collides
+  // with another command's NAME is dead too.
+  for (const [alias, owner] of seenAlias) {
+    if (seen.has(alias)) {
+      problems.push(
+        `alias "${alias}" (defined by ${owner}) is also a command name — the name wins, so the alias can never fire`
+      );
+    }
+  }
+
+  problems.push(...validateRawFiles());
 
   return problems;
 }
@@ -141,7 +205,7 @@ async function main() {
     return;
   }
 
-  console.log('All bodies compile. No duplicate names, aliases or categories.\n');
+  console.log('Every body compiles. No duplicate names, no duplicate aliases, no lost escapes.\n');
   for (const [cat, n] of Object.entries(summarise(commands))) {
     console.log(`  ${cat.padEnd(12)} ${n}`);
   }

@@ -119,9 +119,57 @@ customer, as `Command error: Unexpected token`.
 ```bash
 npm run seed:commands          # dry run: validate every body, write nothing
 npm run seed:commands:apply    # write the pack with profile = 'xmd'
+npm run test:commands          # run the pack and check what it actually computes
 ```
 
-The pack lives in `scripts/commands/part*.js`.
+The pack lives in `scripts/commands/part*.js`: **236 commands** across eight
+parts.
+
+| Category | Commands | Category | Commands |
+|---|---:|---|---:|
+| Text | 64 | Audio | 8 |
+| Generators | 52 | Downloads | 7 |
+| Encoding | 35 | Files | 7 |
+| Codes | 21 | Documents | 4 |
+| Network | 13 | Stickers | 3 |
+| Links | 11 | | |
+| Images | 11 | **Total** | **236** |
+
+Names must be unique across the whole pack, since the runtime resolves a command
+by name first and then by alias, returning the first match — so a duplicate
+alias is dead code and an alias that equals another command's name is
+unreachable. `npm run seed:commands` fails on either.
+
+### The two checks, and why there are two
+
+`npm run seed:commands` compiles every body and enforces the naming rules. That
+proves a body is *valid*; it does not prove the body is *right*. A body can
+compile perfectly while operating on the wrong data, because of one subtlety in
+how bodies are stored:
+
+> A body is written inside a template literal, so escaping is one-for-one on
+> disk and **every backslash must be typed twice**. `\\s` is a whitespace class
+> in the compiled function. A single `\s` survives template-literal evaluation as
+> a bare `s`, so the body still compiles — and then matches the letter `s`
+> instead of whitespace, silently, forever.
+
+The seed script therefore also rejects any non-comment line containing an odd
+number of backslashes, which catches that mistake at the door. To build a
+backslash inside the output of a command, use `String.fromCharCode(92)` rather
+than counting escapes.
+
+`npm run test:commands` covers the other half: it loads the pack, builds the same
+context the runtime builds, and runs commands to compare their answers against
+values recomputed independently with Python's standard library. It touches no
+network and no WhatsApp socket, so it is safe to run anywhere.
+
+### Adding a command
+
+Author it in the lowest-numbered part whose category fits, give every failure
+branch a plain-language reply rather than a throw, cap what you print, and use
+only values from the wired command context (see `buildCommandContext` in
+`case.js`) plus Node built-ins. Then run both scripts — the seed dry run for
+syntax and naming, `test:commands` for behaviour.
 
 ### Verifying what the live bot is actually serving
 

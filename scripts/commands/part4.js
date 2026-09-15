@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// MZAZI XMD — command pack, part 4 of 4: DOCUMENTS, FILES, AND THE DOWNLOADERS
+// MZAZI XMD — command pack, part 4 of 8: DOCUMENTS, FILES, AND THE DOWNLOADERS
 //
 // ── READ THIS BEFORE EXPECTING THE DOWNLOADERS TO WORK ───────────────────────
 // The six commands at the top of this file need an endpoint on your own host.
