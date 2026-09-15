@@ -12,7 +12,7 @@
 // (DATABASE_URL stays in the server env on purpose — never stored in the DB.)
 // ─────────────────────────────────────────────────────────────────────────────
 const staticConfig = {
-  botName: "MZAZI TECH XMD BOT",
+  botName: "MZAZI XMD",
 
   // Bot profile — this process serves exactly one identity, MZAZI XMD.
   //
@@ -84,7 +84,7 @@ const staticConfig = {
   // boxes (╔══╗). That combination is what makes the two bots tellable apart at a
   // glance in the same chat, while both still serve the same command set.
   theme: {
-    name: "MZAZI TECH XMD BOT",
+    name: "MZAZI XMD",
     mode: "DARK",
     primaryColor: "#7C3AED",
     secondaryColor: "#FFFFFF",
@@ -93,7 +93,38 @@ const staticConfig = {
     accentColor2: "#60A5FA",             // gradient partner on generated cards
     cardBg: ["#050f24", "#0d2360", "#050f24"],
     badge: "🔵",                         // emoji signature on every reply footer
-    bannerStyle: "rounded"               // ╭──╮ instead of ╔══╗
+    bannerStyle: "rounded",              // ╭──╮ instead of ╔══╗
+
+    // Response voice. This is where MZAZI XMD's answers stop being word-for-word
+    // copies of QUARTZ XD's: lib/theme.js swaps the status/severity emoji, the
+    // list and divider glyphs and the usage label before the reply goes out, and
+    // normalises any legacy bot name to this bot's own.
+    responseStyle: "xmd",
+
+    // Top-level menu categories. Deliberately a different SET from QUARTZ XD's,
+    // not the same eight reordered — this bot leads with core/search/utility/
+    // language and puts its media and lifestyle categories in a second section.
+    // Every id must resolve to a real command in this bot's registry.
+    categories: [
+      {
+        title: "XMD CORE",
+        rows: [
+          { id: "generalmenu",  title: "🤖 General",  desc: "Everyday commands" },
+          { id: "searchmenu",   title: "🔎 Search",   desc: "Look things up" },
+          { id: "utilitymenu",  title: "🧰 Utility",  desc: "Tools and helpers" },
+          { id: "languagemenu", title: "🌍 Language", desc: "Translate and detect language" }
+        ]
+      },
+      {
+        title: "XMD MEDIA & MORE",
+        rows: [
+          { id: "downloadmenu",  title: "📥 Downloads", desc: "Music and video" },
+          { id: "lifestylemenu", title: "🌿 Lifestyle", desc: "Daily life helpers" },
+          { id: "faithmenu",     title: "🙏 Faith",     desc: "Faith and inspiration" },
+          { id: "settingsmenu",  title: "⚙️ Settings",  desc: "Bot preferences" }
+        ]
+      }
+    ]
   },
 
   fonts: {

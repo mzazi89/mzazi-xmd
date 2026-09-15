@@ -1,4 +1,4 @@
-// Neon PostgreSQL schema for MZAZI TECH XMD BOT subscription system
+// Neon PostgreSQL schema for MZAZI XMD subscription system
 // Managed via Prisma ORM
 
 datasource db {

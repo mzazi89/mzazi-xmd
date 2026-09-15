@@ -1,7 +1,7 @@
 {
   "name": "mzazi-xmd-bot",
   "version": "1.0.0",
-  "description": "MZAZI TECH XMD BOT \u2014 standalone WhatsApp automation bot for the MZAZI XMD profile. Commands are hosted by the website and pulled from /api/xmd-command.",
+  "description": "MZAZI XMD \u2014 standalone WhatsApp automation bot for the MZAZI XMD profile. Commands are hosted by the website and pulled from /api/xmd-command.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

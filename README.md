@@ -1,4 +1,4 @@
-# MZAZI TECH XMD BOT
+# MZAZI XMD
 
 The **MZAZI XMD** WhatsApp automation bot — a standalone deployment with its own
 process, its own configuration and its own command registry.
