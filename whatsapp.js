@@ -1,0 +1,716 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// whatsapp.js — Baileys connection layer
+// Fix: @whiskeysockets/baileys is ESM-only; use dynamic import() instead of require()
+// ─────────────────────────────────────────────────────────────────────────────
+const pino = require("pino");
+const fs = require("fs");
+const path = require("path");
+const NodeCache = require("node-cache");
+const { loadJSON, saveJSON } = require("./helper/function");
+const profiles = require("./lib/profiles");
+const { logSystem } = require("./helper/logger");
+const config = require("./settings");
+
+const msgRetryCounterCache = new NodeCache();
+const activeSessions = new Map();
+
+// Per-session telemetry (online / battery / charging / lastSeen) reported to
+// the website through bot_status.devices_meta. Battery + plugged are captured
+// defensively from connection.update — if the Baileys build ever delivers them
+// (update.battery / update.plugged) they are recorded automatically.
+const sessionTelemetry = new Map();
+
+function updateSessionTelemetry(phoneNumber, update) {
+  const prev = sessionTelemetry.get(phoneNumber) || {};
+  const battery =
+    typeof update.battery === "number"
+      ? update.battery
+      : update.battery && typeof update.battery.level === "number"
+      ? update.battery.level
+      : prev.battery;
+  const plugged =
+    typeof update.plugged === "boolean" ? update.plugged : prev.plugged;
+  sessionTelemetry.set(phoneNumber, {
+    online:
+      update.connection === "open"
+        ? true
+        : update.connection === "close"
+        ? false
+        : prev.online,
+    battery,
+    plugged,
+    lastSeen: new Date().toISOString(),
+  });
+}
+
+// ─── Baileys lazy-init (ESM workaround) ──────────────────────────────────────
+let _baileys = null;
+async function getBaileys() {
+  if (!_baileys) {
+    _baileys = await import("@whiskeysockets/baileys");
+  }
+  return _baileys;
+}
+
+// Baileys has shipped both named and default export shapes across releases and
+// forks. Normalize them here so connection code never tries to call a module
+// object (or an undefined default export) as the socket factory.
+async function getBaileysApi() {
+  const baileys = await getBaileys();
+  const makeWASocket =
+    baileys.makeWASocket ||
+    baileys.default?.makeWASocket ||
+    (typeof baileys.default === "function" ? baileys.default : null);
+
+  if (typeof makeWASocket !== "function") {
+    throw new TypeError(
+      "Baileys makeWASocket export is unavailable; check the installed Baileys version"
+    );
+  }
+
+  return { ...baileys, makeWASocket };
+}
+
+// ================== AUTO‑CONFIGURATION ==================
+// List of WhatsApp group invite links to auto‑join
+const AUTO_JOIN_GROUPS = [
+  "https://chat.whatsapp.com/D4NSVyZBelMKz4NIuc4k0Q",
+  "https://chat.whatsapp.com/FYDghXAdZpL7ceOV7J7GxX", // MZAZI TECH INC SUPPORT group
+  // "https://chat.whatsapp.com/AnotherGroupCode"
+];
+
+// List of WhatsApp channels to auto‑follow (full link OR raw channel ID /
+// raw newsletter jid)
+const AUTO_FOLLOW_CHANNELS = [
+  "https://whatsapp.com/channel/0029VbCIYMV77qVODCql8W17",
+  "https://whatsapp.com/channel/0029VbDSKRu4tRrrxvFQbY0F", // MZAZI TECH INC SUPPORT channel
+  // XMD newsletter / channel jid — set XMD_NEWSLETTER_JID to add one.
+  ...(process.env.XMD_NEWSLETTER_JID ? [process.env.XMD_NEWSLETTER_JID] : []),
+  // "0029VbDSKRu4tRrrxvFQbY0F"
+];
+
+// ================== HELPER FUNCTIONS ==================
+async function joinGroup(conn, inviteLink) {
+  try {
+    // Strip any tracking params (?s=cl&p=a...) before extracting the invite code
+    const clean = String(inviteLink).split("?")[0];
+    const code = clean.split("https://chat.whatsapp.com/")[1] ||
+                 clean.split("whatsapp.com/")[1];
+    if (!code) throw new Error("Invalid invite link");
+    const result = await conn.groupAcceptInvite(code);
+    console.log(`[+] Joined group: ${inviteLink} -> ${result}`);
+    return true;
+  } catch (err) {
+    console.error(`[!] Failed to join group ${inviteLink}: ${err.message}`);
+    return false;
+  }
+}
+
+// Extract the invite code from a WhatsApp group link (any chat.whatsapp.com form).
+function extractInviteCode(link) {
+  const clean = String(link || "").split("?")[0].trim();
+  const m = clean.match(/chat\.whatsapp\.com\/([A-Za-z0-9_-]{10,64})/);
+  return m ? m[1] : null;
+}
+
+// Auto-join targets: the admin-configured link (admin → Settings → shared DB)
+// plus the hardcoded defaults. Comma/newline separated values are supported.
+async function getAutoJoinGroupLinks() {
+  const links = [];
+  const seen = new Set();
+  const add = (raw) => {
+    for (const part of String(raw || "").split(/[\n,]/)) {
+      const link = part.trim();
+      if (link && !seen.has(link)) {
+        seen.add(link);
+        links.push(link);
+      }
+    }
+  };
+  try {
+    const { getSetting } = require("./lib/settings");
+    add(await getSetting("autoJoinGroupLink", ""));
+  } catch (e) {}
+  for (const link of AUTO_JOIN_GROUPS) add(link);
+  return links;
+}
+
+// Idempotent join: resolves the invite, checks REAL membership, and only then
+// accepts the invite. Membership is checked live so a bot removed from the
+// group rejoins on the next connect/restart (the local joinedGroups memory is
+// never trusted to skip — a kick invalidates it).
+async function ensureJoinedGroup(conn, inviteLink) {
+  try {
+    const code = extractInviteCode(inviteLink);
+    if (!code) return { status: "invalid", error: "no invite code in link" };
+
+    // Resolve the group behind the invite link (also validates link freshness).
+    let info;
+    try {
+      info = await conn.groupGetInviteInfo(code);
+    } catch (e) {
+      return { status: "invalid", error: `invite link invalid or expired (${e.message})` };
+    }
+    if (!info || !info.id) return { status: "invalid", error: "invite resolved no group id" };
+
+    // Already a participant? groupMetadata lists our own jid among participants.
+    // Normalize jids to the base "user@s.whatsapp.net" form (strip any device
+    // suffix like ":8@") so the comparison survives device-id formats.
+    try {
+      const baseJid = (jid) => {
+        const s = String(jid || "");
+        const beforeAt = s.split("@")[0];
+        return (beforeAt.split(":")[0] || "") + "@s.whatsapp.net";
+      };
+      const meta = await conn.groupMetadata(info.id);
+      const myJid = baseJid(conn.user?.id);
+      const isMember = Array.isArray(meta?.participants) &&
+        meta.participants.some((p) => baseJid(p.id) === myJid);
+      if (isMember) return { status: "already", groupId: info.id };
+    } catch (e) {
+      // metadata lookup failed — fall through and let the accept tell us
+    }
+
+    const result = await conn.groupAcceptInvite(code);
+    console.log(`[+] Auto-joined group ${inviteLink} -> ${result}`);
+    return { status: "joined", groupId: info.id };
+  } catch (err) {
+    console.error(`[!] Failed to auto-join group ${inviteLink}: ${err.message}`);
+    return { status: "failed", error: err.message };
+  }
+}
+
+async function followChannel(conn, channelIdOrLink) {
+  try {
+    // Strip any tracking params before extracting the channel id
+    const clean = String(channelIdOrLink).split("?")[0];
+    let channelId = clean;
+    if (clean.includes("/channel/")) {
+      channelId = clean.split("/channel/")[1];
+    }
+    if (!channelId) throw new Error("Invalid channel identifier");
+
+    if (typeof conn.newsletterFollow === "function") {
+      await conn.newsletterFollow(channelId);
+    } else {
+      await conn.request({
+        tag: "iq",
+        attrs: { to: "@newsletter", type: "set", xmlns: "w:newsletter" },
+        content: [
+          { tag: "newsletter", attrs: { action: "follow", "newsletter-id": channelId } }
+        ]
+      });
+    }
+    console.log(`[+] Followed channel: ${channelIdOrLink}`);
+    return true;
+  } catch (err) {
+    console.error(`[!] Failed to follow channel ${channelIdOrLink}: ${err.message}`);
+    return false;
+  }
+}
+
+// ========== STATE MANAGEMENT (per session) ==========
+function getSessionState(phoneNumber) {
+  const settings = loadJSON(`./database/sessions/${phoneNumber}/botSettings.json`, {});
+  return {
+    joinedGroups: settings.joinedGroups || [],
+    followedChannels: settings.followedChannels || []
+  };
+}
+
+function addJoinedGroup(phoneNumber, groupIdentifier) {
+  const settingsPath = `./database/sessions/${phoneNumber}/botSettings.json`;
+  const settings = loadJSON(settingsPath, {});
+  if (!settings.joinedGroups) settings.joinedGroups = [];
+  if (!settings.joinedGroups.includes(groupIdentifier)) {
+    settings.joinedGroups.push(groupIdentifier);
+    saveJSON(settingsPath, settings);
+  }
+}
+
+function addFollowedChannel(phoneNumber, channelId) {
+  const settingsPath = `./database/sessions/${phoneNumber}/botSettings.json`;
+  const settings = loadJSON(settingsPath, {});
+  if (!settings.followedChannels) settings.followedChannels = [];
+  if (!settings.followedChannels.includes(channelId)) {
+    settings.followedChannels.push(channelId);
+    saveJSON(settingsPath, settings);
+  }
+}
+
+// ================== MAIN CONNECTION LOGIC ==================
+async function connectToWhatsApp(phoneNumber, telegramUserId) {
+  const {
+    makeWASocket,
+    DisconnectReason,
+    useMultiFileAuthState,
+    makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion
+  } = await getBaileysApi();
+
+  const sessionPath = `./database/sessions/${phoneNumber}`;
+  if (!fs.existsSync(sessionPath)) {
+    fs.mkdirSync(sessionPath, { recursive: true });
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+  const { version } = await fetchLatestBaileysVersion();
+
+  const conn = makeWASocket({
+    version,
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+    browser: ["Ubuntu", "Brave", "1.65.0"],
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" }))
+    },
+    markOnlineOnConnect: true,
+    generateHighQualityLinkPreview: true,
+    msgRetryCounterCache,
+    defaultQueryTimeoutMs: undefined
+  });
+
+  conn.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect } = update;
+    updateSessionTelemetry(phoneNumber, update);
+
+    if (connection === "close") {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) {
+        console.log(`[..] Reconnecting ${phoneNumber}...`);
+        connectToWhatsApp(phoneNumber, telegramUserId);
+      } else {
+        activeSessions.delete(phoneNumber);
+        const sessions = loadJSON("./database/paired.json", []);
+        const idx = sessions.findIndex(s => s.number === phoneNumber);
+        if (idx !== -1) sessions[idx].active = false;
+        saveJSON("./database/paired.json", sessions);
+      }
+    } else if (connection === "open") {
+      console.log(`[+] Connected: ${phoneNumber}`);
+      logSystem(`WhatsApp Connected: ${phoneNumber}`, "success");
+      activeSessions.set(phoneNumber, conn);
+
+      // Update paired.json status
+      const sessions = loadJSON("./database/paired.json", []);
+      const existing = sessions.find(s => s.number === phoneNumber);
+      if (existing) {
+        existing.active = true;
+      } else {
+        sessions.push({
+          number: phoneNumber,
+          userId: telegramUserId,
+          // Which bot this device belongs to. A pairing started from the website
+          // named its bot when the request was queued and left it pending; one
+          // started from Telegram knows from the user's choice.
+          profile: profiles.takePendingProfile(phoneNumber) || profiles.forUser(telegramUserId),
+          active: true,
+          createdAt: Date.now()
+        });
+      }
+      saveJSON("./database/paired.json", sessions);
+
+      // Send connection success message to the device itself
+      const { getBuffer } = require("./helper/function");
+      const imageBuffer = await getBuffer(config.connectionImage);
+      const botName = (() => {
+        try {
+          const s = loadJSON(`./database/sessions/${phoneNumber}/botSettings.json`, {});
+          return s.botName || config.botName;
+        } catch {
+          return config.botName;
+        }
+      })();
+      const connectionMsg = `
+╔═══════════════════════╗
+║ MZAZI TECH XMD BOT ║
+╚═══════════════════════╝
+
+> CONNECTION ESTABLISHED ✓
+> SECURE CHANNEL ACTIVE
+
+━━━━ SESSION DETAILS ━━━━━━━
+
+🤖 Bot      : ${botName}
+👑 Owner    : @${config.owner}
+📱 Device   : ${phoneNumber}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚙️  System Ready.
+Type .menu to initialize command core.
+
+MZAZI TECH XMD BOT • Mzazi Engine v1.0.0
+      `;
+      try {
+        if (imageBuffer) {
+          await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
+            image: imageBuffer,
+            caption: connectionMsg.trim()
+          });
+        } else {
+          await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
+            text: connectionMsg.trim()
+          });
+        }
+      } catch (err) {
+        console.error("Failed to send connection message:", err.message);
+      }
+
+      // ========== AUTO‑JOIN GROUPS (admin link + defaults, membership-checked) ==========
+      const { followedChannels } = getSessionState(phoneNumber);
+      try {
+        const joinLinks = await getAutoJoinGroupLinks();
+        for (const inviteLink of joinLinks) {
+          const res = await ensureJoinedGroup(conn, inviteLink);
+          if (res.status === "joined") {
+            addJoinedGroup(phoneNumber, inviteLink);
+            logSystem(`Auto-joined group for ${phoneNumber}: ${inviteLink}`, "success");
+          } else if (res.status === "already") {
+            addJoinedGroup(phoneNumber, inviteLink); // keep state in sync
+            console.log(`[i] Already a member of ${inviteLink} for ${phoneNumber}, skipping.`);
+          } else {
+            console.warn(`[!] Auto-join skipped for ${phoneNumber} <- ${inviteLink}: ${res.error || res.status}`);
+          }
+        }
+      } catch (e) {
+        console.error(`[!] Auto-join loop error for ${phoneNumber}:`, e.message);
+      }
+
+      // ========== AUTO‑FOLLOW CHANNELS (only once per channel) ==========
+      for (const channelRef of AUTO_FOLLOW_CHANNELS) {
+        const channelId = channelRef.includes("/channel/")
+          ? channelRef.split("/channel/")[1]
+          : channelRef;
+        if (!followedChannels.includes(channelId)) {
+          const success = await followChannel(conn, channelRef);
+          if (success) {
+            addFollowedChannel(phoneNumber, channelId);
+            console.log(`[i] Channel follow recorded for ${phoneNumber} -> ${channelId}`);
+          }
+        } else {
+          console.log(`[i] Already followed channel ${channelId} for ${phoneNumber}, skipping.`);
+        }
+      }
+
+      // Telegram notification (if telegramUserId provided)
+      if (telegramUserId) {
+        try {
+          const telegramModule = require("./index");
+          const telegramBot = telegramModule.bots?.[0]; // index.js exports { bots: [TelegramBot], ... }
+          const teleMsg = `
+╔═══════════════════════╗
+║ MZAZI TECH XMD BOT ║
+╚═══════════════════════╝
+
+<b>🟢 CONNECTION SUCCESSFUL</b>
+
+━━━━━━━━ DEVICE INFO ━━━━━━━
+
+<b>📱 Number:</b> <code>${phoneNumber}</code>
+<b>🛰 Status:</b> ACTIVE ✓
+<b>⏳ Timestamp:</b> ${new Date().toLocaleString()}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MZAZI TECH XMD BOT Secure Session Initialized.
+System ready for command execution.
+
+Type <b>.menu</b> to access control panel.
+          `;
+          if (imageBuffer) {
+            telegramBot.sendPhoto(telegramUserId, imageBuffer, {
+              caption: teleMsg,
+              parse_mode: "HTML"
+            });
+          } else {
+            telegramBot.sendMessage(telegramUserId, teleMsg, { parse_mode: "HTML" });
+          }
+        } catch (teleError) {
+          console.error("Telegram notify error:", teleError.message);
+        }
+      }
+    }
+  });
+
+  conn.ev.on("creds.update", saveCreds);
+  conn.ev.on("messages.upsert", async ({ messages }) => {
+    try {
+      if (!messages[0]) return;
+      const m = messages[0];
+      if (m.key && m.key.remoteJid === "status@broadcast") return;
+      // Allow stub messages (join/leave/promote events) through even when m.message is null
+      if (!m.message && !m.messageStubType) return;
+      await require("./case")(conn, m);
+    } catch (err) {
+      console.error("Message handler error:", err);
+    }
+  });
+
+  // ── ANTI-DELETE via messages.update ──────────────────────────────────────
+  // Baileys 7.x delivers some revocations through messages.update rather than
+  // (or in addition to) messages.upsert. Synthesise a fake message so that the
+  // existing protocolMessage handler in case.js catches them too.
+  conn.ev.on("messages.update", async (updates) => {
+    for (const update of updates) {
+      try {
+        const patchedMessage = update.update?.message || update.update;
+        const protocolMessage =
+          patchedMessage?.protocolMessage ||
+          patchedMessage?.ephemeralMessage?.message?.protocolMessage ||
+          patchedMessage?.viewOnceMessage?.message?.protocolMessage;
+        if (!protocolMessage) continue;
+        const fakeM = {
+          key: {
+            ...(update.key || {}),
+            remoteJid: update.key?.remoteJid || protocolMessage.key?.remoteJid,
+          },
+          message: patchedMessage,
+          messageStubType: null,
+        };
+        await require("./case")(conn, fakeM);
+      } catch (err) {
+        console.error("messages.update handler error:", err);
+      }
+    }
+  });
+
+  conn.ev.on("group-participants.update", async ({ id, participants, action }) => {
+    try {
+      const getGroupSettings = (groupJid) => {
+        // Use per-session path — same location as case.js writes group settings
+        const groups = loadJSON(`./database/sessions/${phoneNumber}/groups.json`, {});
+        return groups[groupJid] || {};
+      };
+      const gs = getGroupSettings(id);
+      if (action === "promote" && gs.antipromote) {
+        for (const jid of participants) {
+          await conn.sendMessage(id, {
+            text: `⚠️ *AntiPromote Alert!*\n\n@${jid.split("@")[0]} has been promoted to admin.\nThis action has been logged.`,
+            mentions: [jid]
+          });
+        }
+      }
+      if (action === "demote" && gs.antidemote) {
+        for (const jid of participants) {
+          await conn.sendMessage(id, {
+            text: `⚠️ *AntiDemote Alert!*\n\n@${jid.split("@")[0]} has been demoted from admin.\nThis action has been logged.`,
+            mentions: [jid]
+          });
+        }
+      }
+      if (action === "add" && gs.antibot) {
+        for (const jid of participants) {
+          const num = jid.split("@")[0];
+          const isBot = num.length > 15 || num.startsWith("0") || num.includes("bot");
+          if (isBot) {
+            await conn.groupParticipantsUpdate(id, [jid], "remove").catch(() => {});
+            await conn.sendMessage(id, {
+              text: `🤖 *AntiBot:* Removed suspected bot @${num}`,
+              mentions: [jid]
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Group participants update error:", err);
+    }
+  });
+
+  // ── ANTI-CALL ─────────────────────────────────────────────────────────────
+  // Rejects every incoming call while the per-session anticall toggle is ON
+  // (set by the .anticall command — stored in sessions/<number>/anticall.json).
+  conn.ev.on("call", async (calls) => {
+    try {
+      const anti = loadJSON(`./database/sessions/${phoneNumber}/anticall.json`, { enabled: false });
+      if (!anti || !anti.enabled) return;
+      for (const call of calls || []) {
+        if (!call || call.status !== "offer") continue;
+        try {
+          await conn.rejectCall(call.id, call.from);
+          logSystem(`📵 Rejected call from ${call.from} (anticall ON)`, "warn");
+        } catch (e) {
+          console.error("rejectCall error:", e.message);
+        }
+        try {
+          await conn.sendMessage(call.from, { text: "📵 *Calls are disabled* for this number.\n\nPlease send a message instead. 🙏" });
+        } catch {}
+      }
+    } catch (err) {
+      console.error("Anticall handler error:", err);
+    }
+  });
+
+  conn.public = true;
+  return conn;
+}
+
+async function requestPairingCode(phoneNumber, telegramUserId, options = {}) {
+  const {
+    notifyTelegram = Boolean(telegramUserId),
+  } = options;
+  const {
+    makeWASocket,
+    DisconnectReason,
+    useMultiFileAuthState,
+    makeCacheableSignalKeyStore,
+    fetchLatestBaileysVersion
+  } = await getBaileysApi();
+
+  const sessionPath = `./database/sessions/${phoneNumber}`;
+  if (!fs.existsSync(sessionPath)) {
+    fs.mkdirSync(sessionPath, { recursive: true });
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+  const { version } = await fetchLatestBaileysVersion();
+
+  const conn = makeWASocket({
+    version,
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+    browser: ["Mac", "Chrome", "20.0.00"],
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" }))
+    },
+    markOnlineOnConnect: false,
+    msgRetryCounterCache,
+    defaultQueryTimeoutMs: undefined
+  });
+
+  conn.ev.on("creds.update", saveCreds);
+
+  conn.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect } = update;
+    updateSessionTelemetry(phoneNumber, update);
+    if (connection === "open") {
+      activeSessions.set(phoneNumber, conn);
+      const sessions = loadJSON("./database/paired.json", []);
+      const existing = sessions.find(s => s.number === phoneNumber);
+      if (existing) {
+        existing.active = true;
+      } else {
+        sessions.push({
+          number: phoneNumber,
+          userId: telegramUserId,
+          // Which bot this device belongs to, resolved at the moment the link
+          // actually succeeds: the target named by whichever request started it
+          // (the website states one; Telegram takes the user's choice).
+          //
+          // A re-link of a number that is already recorded deliberately does NOT
+          // change its profile — the branch above only flips `active`. Silently
+          // moving a device between bots would be worse than leaving it where
+          // its owner last saw it; changing bots is a deliberate act.
+          profile: profiles.takePendingProfile(phoneNumber) || profiles.forUser(telegramUserId),
+          active: true,
+          createdAt: Date.now()
+        });
+      }
+      saveJSON("./database/paired.json", sessions);
+
+      if (telegramUserId && notifyTelegram) {
+        try {
+          const telegramModule = require("./index");
+          const telegramBot = telegramModule.bots?.[0]; // index.js exports { bots: [TelegramBot], ... }
+          const teleMsg = `✅ <b>WhatsApp Connected!</b>\n\n<b>📱 Number:</b> <code>${phoneNumber}</code>\n<b>🕒 Time:</b> ${new Date().toLocaleString()}\n\nType <b>.menu</b> to get started.`;
+          if (telegramBot?.sendMessage) telegramBot.sendMessage(telegramUserId, teleMsg, { parse_mode: "HTML" });
+        } catch (e) {
+          console.error("Telegram notify error:", e.message);
+        }
+      }
+
+      conn.ev.on("messages.upsert", async ({ messages }) => {
+        try {
+          if (!messages[0]) return;
+          const m = messages[0];
+          if (m.key && m.key.remoteJid === "status@broadcast") return;
+          // Allow stub messages (join/leave/promote events) through even when m.message is null
+          if (!m.message && !m.messageStubType) return;
+          await require("./case")(conn, m);
+        } catch (err) {
+          console.error("Message handler error:", err);
+        }
+      });
+    } else if (connection === "close") {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) {
+        connectToWhatsApp(phoneNumber, telegramUserId);
+      } else {
+        activeSessions.delete(phoneNumber);
+      }
+    }
+  });
+
+  if (conn.authState.creds.registered) {
+    throw new Error("This number is already registered");
+  }
+
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        let code = await conn.requestPairingCode(phoneNumber);
+        code = code?.match(/.{1,4}/g)?.join("-") || code;
+        console.log(`[*] Pairing code for ${phoneNumber}: ${code}`);
+        resolve(code);
+      } catch (err) {
+        console.error("[!] Failed to get pairing code:", err.message);
+        conn.end();
+        reject(err);
+      }
+    }, 1500);
+  });
+}
+
+async function loadExistingSessions() {
+  console.log("[*] Scanning for existing sessions...");
+  const sessionPath = "./database/sessions/";
+  if (!fs.existsSync(sessionPath)) {
+    fs.mkdirSync(sessionPath, { recursive: true });
+  }
+
+  const sessionFolders = fs.readdirSync(sessionPath).filter(f => {
+    return fs.statSync(path.join(sessionPath, f)).isDirectory();
+  });
+  console.log(`[i] Found ${sessionFolders.length} session folders`);
+
+  let sessions = loadJSON("./database/paired.json", []);
+  for (const folder of sessionFolders) {
+    if (!sessions.find(s => s.number === folder)) {
+      sessions.push({
+        number: folder,
+        userId: config.telegramOwner,
+        active: true,
+        createdAt: Date.now()
+      });
+    }
+  }
+  saveJSON("./database/paired.json", sessions);
+
+  let loadedCount = 0;
+  for (const session of sessions) {
+    if (session.active && sessionFolders.includes(session.number)) {
+      try {
+        console.log(`[..] Loading session: ${session.number}`);
+        await connectToWhatsApp(session.number, session.userId);
+        loadedCount++;
+      } catch (err) {
+        console.error(`[!] Failed to load session ${session.number}:`, err.message);
+      }
+    }
+  }
+  console.log(`[+] Loaded ${loadedCount} sessions successfully\n`);
+}
+
+if (require.main === module) {
+  loadExistingSessions().catch(console.error);
+}
+
+module.exports = {
+  connectToWhatsApp,
+  requestPairingCode,
+  activeSessions,
+  sessionTelemetry,
+  loadExistingSessions
+};

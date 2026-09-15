@@ -1,0 +1,8 @@
+node_modules/
+.env
+database/xmd-sessions/
+database/sessions/
+sessions/
+*.log
+database/remoteCommands.json
+database/xmdCommands.json
