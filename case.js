@@ -3762,9 +3762,13 @@ const mzazireply = async (text, options = {}) => {
           // whose command lists are unfilled placeholders and which still show
           // the other bot's branding.
           //
-          // isMenuCommand() is true only for the XMD profile, so QUARTZ XD falls
-          // straight through to runRemoteCommand() exactly as before.
-          if (menus.isMenuCommand(command, profileId)) {
+          // This hook is keyed on the command NAME only, not on the resolved
+          // profile. QUARTZ XD is untouched because it runs from its own checkout,
+          // whose case.js has no hook at all — whereas a profile-id check would
+          // depend on a config value (xmd_bot_profiles / BOT_PROFILES) that nothing
+          // else in this bot reads, and would silently do nothing if it resolved
+          // to anything else. See the note in lib/menus.js.
+          if (menus.isMenuCommand(command)) {
             // ping: the same measurement the .ping command reports (elapsed ms
             // since this message began being handled), so the two agree.
             const menuText = menus.renderMenu(command, {
@@ -3772,7 +3776,13 @@ const mzazireply = async (text, options = {}) => {
               prefix,
               ping: Date.now() - startTime,
             });
-            if (menuText) return mzazireply(menuText);
+            // Logged so that "the menu did not change" can be answered from the
+            // bot's own output: either this line appears (the hook ran) or it does
+            // not (this code is not loaded, or the name is not one of the menus).
+            if (menuText) {
+              console.log(`[menus] ${command}: built-in menu sent (profile ${profileId || 'unresolved'})`);
+              return mzazireply(menuText);
+            }
           }
 
           await runRemoteCommand(remoteCmd, buildCommandContext());
