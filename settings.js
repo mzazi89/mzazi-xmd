@@ -95,6 +95,14 @@ const staticConfig = {
     badge: "🔵",                         // emoji signature on every reply footer
     bannerStyle: "rounded",              // ╭──╮ instead of ╔══╗
 
+    // Slanted letterforms. Every reply this bot sends has its Latin text rewritten
+    // to Unicode mathematical italic (see lib/theme.js), including the footer.
+    // QUARTZ XD does not declare this and the two bots share that file, so this
+    // flag is the only thing keeping the treatment on one bot.
+    // Links and email addresses are deliberately left in plain letters: a slanted
+    // URL stops being a URL.
+    slantText: true,
+
     // Response voice. This is where MZAZI XMD's answers stop being word-for-word
     // copies of QUARTZ XD's: lib/theme.js swaps the status/severity emoji, the
     // list and divider glyphs and the usage label before the reply goes out, and
