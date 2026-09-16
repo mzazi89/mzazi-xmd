@@ -26,6 +26,9 @@ const { getMzaziApiKey, getSetting } = require("./lib/settings");
 // This bot's visual identity — accent, badge, banner ornaments, card palette.
 // Values come from settings.js `theme`; see lib/theme.js.
 const theme = require("./lib/theme.js");
+// MZAZI XMD's own menus — see lib/menus.js for why they are rendered rather than
+// read from the stored command rows.
+const menus = require("./lib/menus.js");
 const { db, saveDB } = require("./lib/database");
 const {
   PAIRING_COMMAND,
@@ -3750,6 +3753,28 @@ const mzazireply = async (text, options = {}) => {
           if (remoteCmd.ownerOnly && !isOwner) return mzazireply("❌ Owner only.");
           if (remoteCmd.adminOnly && !isAdmin && !isOwner) return mzazireply("❌ Admins only.");
           if (remoteCmd.groupOnly && !isGroup) return mzazireply("❌ Groups only.");
+
+          // ── MZAZI XMD's own menus ─────────────────────────────────────────
+          // Placed AFTER the permission checks above, on purpose: the stored
+          // rows are what carry ownerOnly/adminOnly/groupOnly, so sending our
+          // own text must not become a way around them. Placed BEFORE the run,
+          // because the stored menu bodies are large interactive-card builders
+          // whose command lists are unfilled placeholders and which still show
+          // the other bot's branding.
+          //
+          // isMenuCommand() is true only for the XMD profile, so QUARTZ XD falls
+          // straight through to runRemoteCommand() exactly as before.
+          if (menus.isMenuCommand(command, profileId)) {
+            // ping: the same measurement the .ping command reports (elapsed ms
+            // since this message began being handled), so the two agree.
+            const menuText = menus.renderMenu(command, {
+              botName,
+              prefix,
+              ping: Date.now() - startTime,
+            });
+            if (menuText) return mzazireply(menuText);
+          }
+
           await runRemoteCommand(remoteCmd, buildCommandContext());
         } catch (e) {
           logSystem(`Imported command "${command}" error: ${e.message}`, "error");
