@@ -372,7 +372,7 @@ async function main() {
 
     const dmSock = makeSock();
     const dm = await command(dmSock, { chatId: STRANGER.jid, text: '.panel', phone: STRANGER.phone });
-    check('a private chat is prompted for the password', /<password>/.test(textsOf(dm.sent)));
+    check('a private chat is prompted for the password', /<password>/.test(allText(dm.sent)));
 
     const activated = await command(dmSock, { chatId: STRANGER.jid, text: '.panel FRESH-CODE', phone: STRANGER.phone });
     check('the password activates the number', /RESELLER ACTIVATED/.test(allText(activated.sent)));

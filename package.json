@@ -15,7 +15,8 @@
     "seed:commands": "node scripts/seed-commands.js",
     "seed:commands:apply": "node scripts/seed-commands.js --apply",
     "test:commands": "node scripts/test-commands.js",
-    "test:panel": "node scripts/test-panel.js"
+    "test:panel": "node scripts/test-panel.js",
+    "test:buttons": "node scripts/test-buttons.js"
   },
   "overrides": {
     "form-data": "^4.0.0"
