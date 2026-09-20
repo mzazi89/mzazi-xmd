@@ -1794,11 +1794,17 @@ You:`.trim();
     // The pending prompt now gets first refusal on the next message. It only keeps
     // it when the text really is the client's details; a genuine command still wins,
     // and neither-details-nor-command keeps the order open so a typo can be fixed.
-    if (!isGroup && waPanel.hasPending(sender) && budy && budy.trim()) {
+    //
+    // This no longer skips groups. In a group the order belongs to the PARTICIPANT
+    // who opened it, which is why the key carries msgSender: keyed on the group
+    // alone, one member's answer would be spent on another member's order.
+    if (waPanel.hasPending({ isGroup, sender, participant: msgSender }) && budy && budy.trim()) {
       const c = command || "";
       const consumed = await waPanel.handlePlainInput({
         mzazi,
         sender,
+        isGroup,
+        participant: msgSender,
         budy,
         senderPhone: await senderPhoneNumber(),
         prefix,
@@ -2220,7 +2226,10 @@ const mzazireply = async (text, options = {}) => {
       return PLANS[normalized] ? normalized : null;
     };
 
-    const sendWhatsappPlans = async () => {
+    // `who` and `mentions` are how the plans menu works in a GROUP: the rows and
+    // the prices are the same for everyone, so the only thing that has to change
+    // is naming whose reply it is. Both are optional, and a DM passes neither.
+    const sendWhatsappPlans = async ({ who: whoLine = "", mentions = [] } = {}) => {
       const planLines = Object.entries(PLANS)
         .filter(([, plan]) => plan.price > 0)
         .map(([key, plan]) =>
@@ -2245,7 +2254,7 @@ const mzazireply = async (text, options = {}) => {
       try {
         await sendInteractiveMessage(mzazi, sender, {
           title: "💳 MZAZI XMD PLANS",
-          text: plansText,
+          text: whoLine + plansText,
           footer: "⚡ Powered by MZAZI TECH INC",
           interactiveButtons: [
             {
@@ -2290,13 +2299,15 @@ const mzazireply = async (text, options = {}) => {
         console.error("❌ PLANS MENU ERROR:", e?.message || e);
         // Fallback: plain text so the command still answers
         await mzazireply(
+          whoLine +
           `💳 *MZAZI XMD PLANS*\n\n` +
           `🆓 FREE — 1 WhatsApp device\n` +
           `${planLines}\n\n` +
           `Pay from WhatsApp with:\n` +
           `• ${prefix}pay PLAN_5\n` +
           `• ${prefix}pay 10\n\n` +
-          `After paying, use ${prefix}verify <reference>.`
+          `After paying, use ${prefix}verify <reference>.`,
+          { mentions }
         );
       }
     };
@@ -2393,8 +2404,12 @@ const mzazireply = async (text, options = {}) => {
     };
 
     if (isPairingCommand) {
+      // Pairing stays private-chat only, and it is now the ONLY thing that is:
+      // the code it returns links a WhatsApp account to this bot, so publishing
+      // it into a group would hand the linked-device step to whoever reads it.
+      // Payment and panel commands are deliberately no longer gated (see below).
       if (isGroup) {
-        await mzazireply("❌ Pairing and payment commands are available in a private chat only.");
+        await mzazireply("❌ Pairing is available in a private chat only.\n\nPayment commands (plans, pay, verify) work here in the group.");
         return;
       }
 
@@ -2472,50 +2487,60 @@ const mzazireply = async (text, options = {}) => {
       return;
     }
 
+    // ── Plans and payment ────────────────────────────────────────────────────
+    // Available in a group as well as in a DM. The account being paid for is
+    // always the one whose WhatsApp number sent the command: in a group that is
+    // the PARTICIPANT, and the reply names them so the rest of the group can see
+    // whose link it is.
+    const paymentCtx = isGroup
+      ? { mentions: [msgSender] }
+      : {};
+    const paymentWho = isGroup ? `👤 @${senderNumber}\n\n` : "";
+
     if (isPlansCommand || (isPaymentCommand && !args[0])) {
-      if (isGroup) {
-        await mzazireply("❌ Plans and payment commands are available in a private chat only.");
-        return;
-      }
       // `.buy` with no plan arg → the MZAZI XMD main menu (admin-defined).
       if (whatsappCommand === "buy") {
         await sendWhatsappBuyMenu();
         return;
       }
-      await sendWhatsappPlans();
+      await sendWhatsappPlans({ who: paymentWho, mentions: paymentCtx.mentions });
       return;
     }
 
     if (isPaymentCommand) {
-      if (isGroup) {
-        await mzazireply("❌ Payment commands are available in a private chat only.");
-        return;
-      }
-      const accountId = resolveWhatsappAccountId(senderPureNumber, botPhoneNum);
+      // The REAL phone number, not the raw jid digits: a Linked-ID chat addresses
+      // the sender with an @lid whose digits are not a phone number, and keying a
+      // payment to it created an account nobody could ever pay for.
+      const accountId = resolveWhatsappAccountId(await senderPhoneNumber(), botPhoneNum);
       const planKey = planKeyFromInput(args[0]);
       if (!accountId) {
-        await mzazireply("❌ I could not identify your WhatsApp account.");
+        await mzazireply(`${paymentWho}❌ I could not identify your WhatsApp account.`, paymentCtx);
         return;
       }
       if (!planKey || planKey === "FREE") {
-        await mzazireply("❌ Choose a paid plan, for example: .pay PLAN_5, .pay 10, or .pay unlimited");
+        await mzazireply(`${paymentWho}❌ Choose a paid plan, for example: .pay PLAN_5, .pay 10, or .pay unlimited`, paymentCtx);
         return;
       }
 
-      await mzazireply("⏳ Generating your secure Paystack payment link...");
+      await mzazireply(`${paymentWho}⏳ Generating your secure Paystack payment link...`, paymentCtx);
       const result = await createWhatsappPayment(accountId, planKey);
       if (!result.success) {
-        await mzazireply(`❌ Could not create the payment link.\n\n${result.error || "Please try again later."}`);
+        await mzazireply(`${paymentWho}❌ Could not create the payment link.\n\n${result.error || "Please try again later."}`, paymentCtx);
         return;
       }
 
       const plan = getPlanSummary(planKey);
       // Native interactive payment card: PAY NOW CTA button carries the
       // Paystack URL (no raw link in the text) + quick-reply Verify/Menu.
+      // The Verify quick reply carries the reference, so the verification is
+      // keyed to THIS payment rather than to whatever was typed last — and in a
+      // group it still resolves for the member who tapped it, because the row is
+      // indexed against the reference it was built with.
       try {
         await sendInteractiveMessage(mzazi, sender, {
           title: "💳 PAYMENT INITIATED",
           text:
+            paymentWho +
             `📦 Plan: *${plan.name}*\n` +
             `💰 Amount: *KES ${plan.price}*\n` +
             `⏳ Validity: *${plan.days} days*\n` +
@@ -2550,49 +2575,52 @@ const mzazireply = async (text, options = {}) => {
         console.error("❌ PAYMENT BUTTONS ERROR:", e?.message || e);
         // Fallback: plain text so the payment flow still works
         await mzazireply(
-          `💳 *PAYMENT INITIATED*\n\n` +
+          `${paymentWho}💳 *PAYMENT INITIATED*\n\n` +
           `📦 Plan: *${plan.name}*\n` +
           `💰 Amount: *KES ${plan.price}*\n` +
           `⏳ Validity: *${plan.days} days*\n` +
           `🔖 Reference: \`${result.reference}\`\n\n` +
           `Pay here:\n${result.url}\n\n` +
-          `After payment, send:\n${prefix}verify ${result.reference}`
+          `After payment, send:\n${prefix}verify ${result.reference}`,
+          paymentCtx
         );
       }
       return;
     }
 
     if (isVerifyCommand) {
-      if (isGroup) {
-        await mzazireply("❌ Payment verification is available in a private chat only.");
-        return;
-      }
       const reference = args.join(" ").trim();
       if (!reference) {
-        await mzazireply(`Usage: ${prefix}verify <payment-reference>`);
+        await mzazireply(`${paymentWho}Usage: ${prefix}verify <payment-reference>`, paymentCtx);
         return;
       }
 
-      await mzazireply("⏳ Verifying your Paystack payment...");
-      const accountId = resolveWhatsappAccountId(senderPureNumber, botPhoneNum);
+      await mzazireply(`${paymentWho}⏳ Verifying your Paystack payment...`, paymentCtx);
+      // The participant's real number, so a group member's payment is verified
+      // against their own account — and `verify` refuses a reference that belongs
+      // to somebody else, which is what stops one member claiming another's.
+      const accountId = resolveWhatsappAccountId(await senderPhoneNumber(), botPhoneNum);
       const result = await verifyWhatsappPayment(reference, accountId);
       if (!result.success) {
         await mzazireply(
-          result.alreadyProcessed
+          `${paymentWho}` + (result.alreadyProcessed
             ? "✅ This payment was already verified."
-            : `❌ Payment verification failed.\n\n${result.error || "Please wait a moment and try again."}`
+            : `❌ Payment verification failed.\n\n${result.error || "Please wait a moment and try again."}`),
+          paymentCtx
         );
         return;
       }
 
       const plan = getPlanSummary(result.planKey);
       await mzazireply(
+        paymentWho +
         `✅ *PAYMENT VERIFIED*\n\n` +
         `📦 Plan: *${plan?.name || result.planKey}*\n` +
         `📱 Devices: *${plan?.maxDevices === 999 ? "Unlimited" : plan?.maxDevices}*\n` +
         `⏳ Validity: *${plan?.days || 30} days*\n\n` +
         `You can now use ${prefix}pair 2547XXXXXXXX to connect a device.`,
         {
+          ...paymentCtx,
           customButtons: [
             { id: `${prefix}pair`, text: "🔗 Pair Device" },
             { id: `${prefix}menu`, text: "📜 Menu" },
@@ -2609,6 +2637,9 @@ const mzazireply = async (text, options = {}) => {
         mzazi,
         sender,
         isGroup,
+        // Who the order belongs to. In a group `sender` is the group, so the
+        // reseller is the participant; in a DM the two are the same jid.
+        participant: msgSender,
         command,
         args,
         prefix,

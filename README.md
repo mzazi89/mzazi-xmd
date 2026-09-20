@@ -182,6 +182,65 @@ From WhatsApp, as owner:
 
 ---
 
+## WhatsApp panel reseller flow
+
+The reseller commands are engine commands (they run from `lib/waPanel.js`, not
+from the registered pack), because they hold state between messages.
+
+A number becomes a reseller by entering a reseller password the admin generated
+in the website. **Activation happens in a private chat only** — the password is
+the reseller's credential, and a group would show it to every member and let the
+first one to retype it bind it to their own number. Everything after activation
+works in a group as well as in a DM.
+
+| Step | Sent | Gets back |
+|---|---|---|
+| 1 | `.panel` | the RAM size menu (1GB – 10GB, UNLIMITED) |
+| 2 | tap a size | the **nest** menu, built from this panel's own nests |
+| 3 | tap a nest | the **egg** menu, from that nest |
+| 4 | tap an egg | the prompt for the client, if none was given yet |
+| 5 | `username, 2547XXXXXXXX` | the panel, the login details, and a copy forwarded to the client |
+
+The whole order also fits on one line — `.4gb mzazi, 254741388986` goes straight
+to step 2 — and `.panel mzazi, 254741388986` names the client first, in which case
+the size menu follows and the client is remembered through the rest of the order.
+
+**The reseller chooses the nest and the egg.** Nothing is picked for them: the
+menus are read from the Pterodactyl application API, and the egg that reaches
+`POST /api/application/servers` is the one that was tapped. Each menu's rows carry
+the whole selection in their id (`panel egg 4gb 2 9`), so a tap is answered by what
+is in the id rather than by what happens to be remembered, and a menu that outlives
+an administration change answers "that egg is gone, pick again" instead of
+collecting a client's details for a server that cannot be built.
+
+**In a group**, the reseller is the participant who sent the message. Every piece
+of an order — the pending client, the chosen size, the nest and the egg — is keyed
+by that participant, so two resellers can work in one group without consuming each
+other's orders, and every reply names whose order it belongs to. A second tap on
+an egg while the first is still provisioning is answered with a "wait", not with a
+second server.
+
+**When the panel is created the details are forwarded to the client** at the
+WhatsApp number the order named, before the reseller's confirmation card is sent
+so that the card can report what actually happened to it. The number is checked
+with `onWhatsApp` first: a number with no WhatsApp account is reported as NOT
+delivered, because a silent non-delivery reported as "sent" is how a client ends
+up waiting for details that were never going to arrive.
+
+`.panel` and the payment commands (`plans`, `pay`, `verify`) all work in a group.
+`.pair` does not — see the note on activation above.
+
+### Testing the flow
+
+```bash
+npm run test:panel      # stubs axios, prisma and the socket; asserts what would be sent
+```
+
+It covers the four claims above: the menu chain, a group with two resellers at
+once, the client forward (including an undeliverable number), and the double tap.
+
+---
+
 ## How the pieces fit
 
 ```
@@ -231,6 +290,7 @@ website outage means the bot boots from cache rather than losing every command.
 | `lib/subscription.js` · `lib/payment.js` | Plans, wallet, Paystack |
 | `lib/panelBuy.js` · `lib/waPanel.js` · `lib/userServers.js` | Panel and VPS fulfilment |
 | `scripts/seed-commands.js` | Validates and seeds the XMD command pack |
+| `scripts/test-panel.js` | Reseller flow: menus, groups, client forward, double tap |
 | `prisma/schema.prisma` | Prisma schema (shared database) |
 
 ---
