@@ -2031,166 +2031,18 @@ const mzazireply27 = async (text) => {
     });
 };
 
-const mzazireply = async (text, options = {}) => {
-    try {
-        // ── This bot's own look ──────────────────────────────────────────────
-        // Every remote command replies through here, so the identity is applied
-        // in ONE place rather than in 1022 database-hosted command bodies: the
-        // banner ornaments are swapped for this bot's set (MZAZI XMD draws
-        // rounded corners, QUARTZ XD keeps its double lines) and the footer
-        // carries this bot's own name and badge.
-        text = theme.restyle(text);
-
-        const {
-            quoted = null,
-            mentions = [],
-            image = null,
-            showMenu = false,
-            customButtons = null,
-            // The owner credit is appended below unless a caller set its own
-            // footer, so this stays this bot's identity line.
-            footer = theme.signature
-        } = options;
-
-        const chatId = sender;
-
-        // ── Build contextInfo ──
-        let contextInfo = { mentionedJid: mentions };
-
-        // ── If replying to a message ──
-        if (quoted) {
-            contextInfo = {
-                ...contextInfo,
-                stanzaId: quoted.key?.id,
-                participant: quoted.key?.participant || quoted.key?.remoteJid,
-                quotedMessage: quoted.message,
-                remoteJid: quoted.key?.remoteJid
-            };
-        }
-
-        // ── Add forwarding ──
-        // The channel every reply is attributed to. Kept in one block so the
-        // newsletter can be re-pointed without touching the send paths below.
-        //
-        // The name is a literal rather than botName on purpose: setting
-        // `bot_name` in the admin panel renames the bot, not its channel.
-        // serverMessageId is deliberately absent — it refers to a specific post
-        // in a specific channel, so carrying 143 over from the old newsletter
-        // would point at someone else's message.
-        contextInfo = {
-            ...contextInfo,
+const mzazireply = async (text) => {
+    return await mzazi.sendMessage(sender, {
+        text,
+        contextInfo: {
             forwardingScore: 2,
             isForwarded: true,
             forwardedNewsletterMessageInfo: {
                 newsletterJid: "120363430368431358@newsletter",
-                newsletterName: "▄︻̷̿┻̿═━一𝐐𝐔𝐀𝐑𝐓𝐙⃠༊𝐗𝐃⃠"
-            }
-        };
-
-        // ── Build message payload ──
-        let messagePayload = { contextInfo };
-
-        // ── Handle image ──
-        let finalImage = image;
-        // Function-scoped image buffer — also used by the buttons branch below
-        // (was block-scoped before, causing ReferenceError when sending buttons)
-        let imageBuffer = null;
-
-        if (showMenu) {
-            // Get menu image
-            const customMenuPic = `./database/sessions/${botPhoneNum}/menu.jpg`;
-            const defaultMenuPic = "./media/menu.jpg";
-            const menuPicPath = fs.existsSync(customMenuPic) ? customMenuPic : defaultMenuPic;
-            
-            if (fs.existsSync(menuPicPath)) {
-                finalImage = fs.readFileSync(menuPicPath);
+                newsletterName: "MZAZI XMD"
             }
         }
-
-        // ── Process image ──
-        // NOTE: imageBuffer is function-scoped (declared above) so the
-        // buttons branch below can use it too. It used to be declared here
-        // with `let`, which made the buttons branch throw
-        // "ReferenceError: imageBuffer is not defined" -> buttons never sent.
-        if (finalImage) {
-            if (Buffer.isBuffer(finalImage)) {
-                imageBuffer = finalImage;
-            } else if (typeof finalImage === 'string' && fs.existsSync(finalImage)) {
-                imageBuffer = fs.readFileSync(finalImage);
-            }
-            
-            if (imageBuffer) {
-                messagePayload.image = imageBuffer;
-                messagePayload.caption = text;
-                messagePayload.jpegThumbnail = imageBuffer;
-            } else {
-                messagePayload.text = text;
-            }
-        } else {
-            messagePayload.text = text;
-        }
-
-        // ── Default buttons (Menu, Ping, Owner) ──
-        const defaultButtons = [
-            {
-                buttonId: `${prefix}menu`,
-                buttonText: { displayText: "📜 Menu" },
-                type: 1
-            },
-            {
-                buttonId: `${prefix}ping`,
-                buttonText: { displayText: "🏓 Ping" },
-                type: 1
-            },
-            {
-                buttonId: `${prefix}owner`,
-                buttonText: { displayText: "👑 Owner" },
-                type: 1
-            }
-        ];
-
-        // ── Use custom buttons if provided, else default ──
-        const buttons = customButtons || defaultButtons;
-
-        // ── Add owner name to footer if not set ──
-        let finalFooter = footer;
-        if (!finalFooter.includes('MAGGIE X KERUBO')) {
-            finalFooter = `${finalFooter} | 👑 MAGGIE X KERUBO`;
-        }
-
-        // ── Send (native interactive buttons) ──
-        if (buttons.length > 0) {
-            // Pass the RAW buffer to sendButtonMessage — lib/buttons.js
-            // uploads it via Baileys prepareWAMessageMedia (data-URLs can't
-            // be uploaded). String URLs are passed as { url }.
-            let btnImage;
-            if (imageBuffer) {
-                btnImage = Buffer.isBuffer(imageBuffer) ? imageBuffer : { url: imageBuffer };
-            }
-            await sendButtonMessage(mzazi, chatId, {
-                text: messagePayload.caption || messagePayload.text || text,
-                footer: finalFooter,
-                image: btnImage,
-                buttons: buttons.map((b) => ({
-                    id: b.buttonId || b.id || `${prefix}menu`,
-                    text: b.buttonText?.displayText || b.text || 'Menu',
-                })),
-            });
-            return;
-        }
-
-        await mzazi.sendMessage(chatId, messagePayload);
-
-    } catch (err) {
-        logSystem(`mzazireply error: ${err.message}`, 'error');
-        
-        // Ultimate fallback
-        try {
-            await mzazi.sendMessage(sender, { text: text });
-        } catch (e) {
-            logSystem(`Final fallback failed: ${e.message}`, 'error');
-        }
-    }
+    });
 };
 
 
