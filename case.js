@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "antiviewoncegc"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -1685,7 +1685,18 @@ You:`.trim();
         _avUnwrapped?.viewOnceMessageV2Extension?.message;
 
       if (_vOnce && !m.key.fromMe) {
-        const _vType = Object.keys(_vOnce)[0];
+        // messageType(), not Object.keys(_vOnce)[0]. The unwrapped payload carries
+        // messageContextInfo AHEAD of the real content, so the first key named that
+        // blob instead of the media — the exact trap NON_CONTENT_FIELDS was added
+        // for above. No send branch matched, so the media was downloaded, the caption
+        // was built, and nothing was ever sent, with no error left to log. That is
+        // why this looked like it only detected view-once messages. The scan covers a
+        // payload that leads with some other non-media field while still carrying media.
+        const _vType = (() => {
+          const _named = messageType(_vOnce);
+          if (["imageMessage", "videoMessage", "audioMessage"].includes(_named)) return _named;
+          return ["imageMessage", "videoMessage", "audioMessage"].find((k) => _vOnce[k]) || _named;
+        })();
 
         // Determine whether antiviewonce is enabled for this chat
         const _avoEnabled = (() => {
@@ -3777,6 +3788,36 @@ const mzazireply = async (text) => {
         `🌐 *Remote Commands* (${list.length})\n\n${lines}\n\n` +
         `Last sync: ${status.syncedAt || "never"}` +
         (status.lastError ? `\n⚠️ Last sync error: ${status.lastError}` : "")
+      );
+    }
+
+    // ── Anti-view-once, group chat ─────────────────────────────────────────────
+    // Writes the SAME per-group switch that the .antiviewonce registry command
+    // writes and that the block further up reads, so the two can never disagree
+    // about where the state lives. Group-only and admins/owner, matching it.
+    if (command === "antiviewoncegc") {
+      if (!isGroup) return mzazireply("❌ Group only!");
+      if (!isAdmin && !isOwner) return mzazireply("❌ Admins/Owner only!");
+
+      const avWant = String(args[0] || "").toLowerCase();
+      const avOn = getGroupSettings(sender).antiviewonce === true;
+
+      if (avWant !== "on" && avWant !== "off") {
+        return mzazireply(
+          `👁️ *ANTI-VIEW-ONCE (group)*\n\n` +
+          `Status: ${avOn ? "🟢 ON" : "🔴 OFF"}\n\n` +
+          `• ${prefix}antiviewoncegc on\n` +
+          `• ${prefix}antiviewoncegc off\n\n` +
+          `When ON, a view-once image, video or voice note sent in this group is opened ` +
+          `and re-sent here, so it stops disappearing.`
+        );
+      }
+
+      setGroupSetting(sender, "antiviewonce", avWant === "on");
+      return mzazireply(
+        avWant === "on"
+          ? "👁️ *ANTI-VIEW-ONCE ON* — view-once media sent here is opened and re-sent in this group."
+          : "🔴 *ANTI-VIEW-ONCE OFF* — view-once media is left untouched."
       );
     }
 
