@@ -979,13 +979,15 @@ module.exports = async (mzazi, m) => {
         message?.ephemeralMessage?.message?.viewOnceMessageV2Extension
       );
       const _dbgGroup = String(sender).endsWith("@g.us");
+      const _dbgKeyVO = m.key?.isViewOnce === true;
       if (_dbgGroup || _dbgEnv || ["imageMessage", "videoMessage", "audioMessage"].includes(type)) {
         const _dbgNum = String(mzazi?.user?.id || "").split("@")[0].split(":")[0];
         const _dbgGroups = loadJSON(`./database/sessions/${_dbgNum}/groups.json`, {});
         const _dbgPath = "./database/avdebug.log";
         try { if (fs.statSync(_dbgPath).size > 524288) fs.unlinkSync(_dbgPath); } catch (e) {}
         fs.appendFileSync(_dbgPath,
-          `${new Date().toISOString()} type=${type} env=${_dbgEnv} fromMe=${Boolean(m.key.fromMe)} ` +
+          `${new Date().toISOString()} type=${type} env=${_dbgEnv} keyIsViewOnce=${_dbgKeyVO} ` +
+          `fromMe=${Boolean(m.key.fromMe)} ` +
           `group=${_dbgGroup} avOn=${JSON.stringify(_dbgGroups[sender]?.antiviewonce)} ` +
           `session=${_dbgNum} chat=${sender} ` +
           `Msg=[${Object.keys(message || {}).join(",")}] ` +
@@ -1817,7 +1819,14 @@ You:`.trim();
       const _avInner = unwrapMessage(message);
       const _avMediaKey = ["imageMessage", "videoMessage", "audioMessage"].find((k) => _avInner?.[k]);
       const _avFlagged = Boolean(_avMediaKey && _avInner?.[_avMediaKey]?.viewOnce);
-      const _isViewOnce = Boolean(_avEnvelope) || _avFlagged;
+      // THE marker. WhatsApp marks a view-once stanza `<unavailable type="view_once">`,
+      // and decode-wa-message.ts turns that into key.isViewOnce — see
+      // lib/Utils/decode-wa-message.js:224 in the baileys fork this bot installs. The
+      // content arrives as a plain imageMessage with NO viewOnceMessage wrapper and NO
+      // viewOnce flag on the media, so every wrapper and flag check above found nothing
+      // and this block never fired. This key is the only thing that says "view-once".
+      const _avKeyFlag = m.key?.isViewOnce === true;
+      const _isViewOnce = Boolean(_avEnvelope) || _avFlagged || _avKeyFlag;
       const _vOnce = _avEnvelope || (_avFlagged ? _avInner : null);
 
       // Determine whether antiviewonce is enabled for this chat
@@ -1835,13 +1844,14 @@ You:`.trim();
       if (_isViewOnce || (_avoEnabled && _avMediaKey)) {
         logSystem(
           `AntiViewOnce: media=${_avMediaKey || "none"} envelope=${_avEnvelope ? "yes" : "no"} ` +
-          `flag=${_avFlagged ? "yes" : "no"} fromMe=${Boolean(m.key.fromMe)} ` +
+          `flag=${_avFlagged ? "yes" : "no"} keyFlag=${_avKeyFlag ? "yes" : "no"} ` +
+          `fromMe=${Boolean(m.key.fromMe)} ` +
           `${isGroup ? "group" : "dm"} enabled=${Boolean(_avoEnabled)}`,
           _isViewOnce ? "info" : "warn"
         );
       }
 
-      if (_isViewOnce && _avMediaKey && !m.key.fromMe) {
+      if (_isViewOnce && _avMediaKey) {
         // The media key IS the type. Deriving it from the payload's first key is what
         // named messageContextInfo and sent nothing at all, silently.
         const _vType = _avMediaKey;
