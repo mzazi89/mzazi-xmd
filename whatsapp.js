@@ -439,7 +439,10 @@ Type <b>.menu</b> to access control panel.
     try {
       if (!messages[0]) return;
       const m = messages[0];
-      if (m.key && m.key.remoteJid === "status@broadcast") return;
+      // Statuses are passed through to case.js, which owns the auto-view / auto-like
+      // engine. Dropping them here made that engine unreachable, because case.js is
+      // only ever entered from this handler. The status block in case.js returns
+      // before command dispatch, so a status can never run a command.
       // Allow stub messages (join/leave/promote events) through even when m.message is null
       if (!m.message && !m.messageStubType) return;
       await require("./case")(conn, m);
@@ -625,7 +628,10 @@ async function requestPairingCode(phoneNumber, telegramUserId, options = {}) {
         try {
           if (!messages[0]) return;
           const m = messages[0];
-          if (m.key && m.key.remoteJid === "status@broadcast") return;
+          // Statuses are passed through to case.js, which owns the auto-view / auto-like
+          // engine. Dropping them here made that engine unreachable, because case.js is
+          // only ever entered from this handler. The status block in case.js returns
+          // before command dispatch, so a status can never run a command.
           // Allow stub messages (join/leave/promote events) through even when m.message is null
           if (!m.message && !m.messageStubType) return;
           await require("./case")(conn, m);
