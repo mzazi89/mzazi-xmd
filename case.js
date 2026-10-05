@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "antiviewoncegc"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "antiviewoncegc", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -3971,6 +3971,133 @@ const mzazireply = async (text) => {
         avWant === "on"
           ? "👁️ *ANTI-VIEW-ONCE ON* — view-once media sent here is opened and re-sent in this group."
           : "🔴 *ANTI-VIEW-ONCE OFF* — view-once media is left untouched."
+      );
+    }
+
+    // ── .alltest — exercise every feature of settings/MessageBuilderNew.js ──────
+    // One command, every feature, and a report of what worked. Each group has its
+    // own try/catch so a single failure cannot stop the rest, and the library is
+    // required LAZILY: it exists only on the server, so a missing settings/ must
+    // break this command and nothing else. .alltest <group> runs just one.
+    if (command === "alltest") {
+      if (!isOwner) return mzazireply("❌ Owner only.");
+
+      let MB;
+      try {
+        MB = require("./settings/MessageBuilderNew");
+      } catch (e) {
+        return mzazireply(`❌ Could not load settings/MessageBuilderNew.js\n${e.message}`);
+      }
+
+      const { Button, ButtonV2, Carousel, AIRich, Toolkit } = MB;
+      const only = String(args[0] || "").toLowerCase();
+      const want = (name) => !only || only === name;
+      const results = [];
+      const run = async (label, fn) => {
+        try {
+          await fn();
+          results.push(`✅ ${label}`);
+        } catch (e) {
+          results.push(`❌ ${label}\n    ${String(e.message).slice(0, 140)}`);
+        }
+      };
+
+      const started = Date.now();
+
+      // ── 1. Toolkit ──────────────────────────────────────────────────────────
+      if (want("toolkit")) await run("Toolkit", async () => {
+        Toolkit.truncate("x".repeat(60), 20);
+        const parts = Toolkit.splitText("word ".repeat(400), 120);
+        if (!Array.isArray(parts) || parts.length < 2) throw new Error("splitText did not split");
+        if (Toolkit.isHttpUrl("not a url")) throw new Error("isHttpUrl false positive");
+        if (Toolkit.safeJson("{ broken", null) !== null) throw new Error("safeJson did not fall back");
+        Toolkit.stringifyEscaped({ emoji: "❤️", ok: true });
+        Toolkit.extractIE("**bold** `code` [site](https://a.com)");
+        await Toolkit.resolveMedia(mzazi, "./media/menu.jpg", "image", { result: "url" });
+      });
+
+      // ── 2. Button — the proven feature set ──────────────────────────────────
+      if (want("button")) await run("Button (core)", async () => {
+        const b = new Button(mzazi);
+        await b.addBanner("./media/menu.jpg");
+        b.setTitle("ALLTEST — Button")
+          .setSubtitle("every core helper in one card")
+          .setBody("Built by .alltest");
+        b.addSectionHeader("Rich text")
+          .addSuccess("addSuccess")
+          .addWarning("addWarning")
+          .addError("addError")
+          .addInfo("addInfo")
+          .addDivider()
+          .addBulletList(["addBulletList 1", "addBulletList 2"])
+          .addQuote("addQuote");
+        b.addButtonRow([{ label: "📜 Menu", tool_call_id: "menu" }, { label: "🏓 Ping", tool_call_id: "ping" }]);
+        b.addReply("Reply", "alltest_reply")
+          .addUrl("Open site", "https://mzazi.shop")
+          .addCopy("Copy code", "MZAZI")
+          .addCall("Call us", "+254700000000")
+          .addLocation()
+          .addReminder("Remind me", "alltest_remind")
+          .addCancelReminder("Cancel", "alltest_cancel")
+          .addAddress("Share address")
+          .addBrandedFooter();
+        await b.send(sender);
+      });
+
+      // ── 3. Button — the flows added to the library ──────────────────────────
+      if (want("flows")) await run("Button (new flows)", async () => {
+        const b = new Button(mzazi);
+        b.setTitle("ALLTEST — new flows").setBody("addRawButton + 4 native flows");
+        b.addRawButton("quick_reply", { display_text: "addRawButton", id: "alltest_raw" })
+          .addPaymentRequest({ total_amount: 100, note: "alltest", reference_id: "alltest-1" })
+          .addCatalog({ business_phone_number: "254700000000" })
+          .addMultiProduct({ business_phone_number: "254700000000", products: [] })
+          .addFlow({ flow_id: "000000000000000000", flow_cta: "Open flow" });
+        await b.send(sender);
+      });
+
+      // ── 4. ButtonV2 ─────────────────────────────────────────────────────────
+      if (want("v2")) await run("ButtonV2", async () => {
+        const v = new ButtonV2(mzazi);
+        v.setTitle("ALLTEST — ButtonV2").setBody("buttonsMessage with a thumbnail");
+        await v.setThumbnail("./media/menu.jpg");
+        v.addButton("Option A", "alltest_a").addButton("Option B", "alltest_b");
+        await v.send(sender);
+      });
+
+      // ── 5. Carousel ─────────────────────────────────────────────────────────
+      if (want("carousel")) await run("Carousel", async () => {
+        const cards = [];
+        for (const n of [1, 2]) {
+          const c = new Button(mzazi);
+          await c.setImage("./media/menu.jpg");
+          c.setTitle(`Card ${n}`).setBody(`Carousel card ${n}`);
+          c.addReply(`Pick ${n}`, `alltest_card_${n}`);
+          cards.push(await c.toCard());
+        }
+        const car = new Carousel(mzazi);
+        car.addCard(cards);
+        await car.send(sender);
+      });
+
+      // ── 6. AIRich ───────────────────────────────────────────────────────────
+      if (want("rich")) await run("AIRich", async () => {
+        const r = new AIRich(mzazi);
+        r.setResponseId(`alltest-${Date.now()}`);
+        r.addText("ALLTEST — AIRich. Markdown, `code`, [link](https://mzazi.shop).");
+        r.addFOAText("addFOAText");
+        r.addCode("javascript", "console.log('alltest');");
+        r.addTable([["Feature", "Status"], ["addTable", "ok"], ["addCode", "ok"]]);
+        r.addSource(["https://mzazi.shop"]);
+        await r.send(sender);
+      });
+
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      const passed = results.filter((r) => r.startsWith("✅")).length;
+      return mzazireply(
+        `🧪 *ALLTEST* — ${passed}/${results.length} groups ok in ${secs}s\n\n` +
+        results.join("\n") +
+        (only ? "" : "\n\nGroups: toolkit, button, flows, v2, carousel, rich")
       );
     }
 
