@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -33,6 +33,8 @@ const ENGINE_COMMANDS = ["synccmd", "sync", "remote"];
 // lib/ownMessages.js.
 const ownMessages = require("./lib/ownMessages");
 const { handleGroupLockEvent } = require("./lib/groupLock.js");
+// The one-emoji rule for status reactions — see lib/statusEmoji.js.
+const { isSingleEmoji, DEFAULT_EMOJI } = require("./lib/statusEmoji");
 const { getMzaziApiKey, getSetting } = require("./lib/settings");
 // This bot's visual identity — accent, badge, banner ornaments, card palette.
 // Values come from settings.js `theme`; see lib/theme.js.
@@ -1876,7 +1878,11 @@ You:`.trim();
           } catch (e) {}
         }
       } catch (e) {}
-      if (!isCmd) return;
+      // A status is never a command, so this exits unconditionally. It used to be
+      // `if (!isCmd) return;`, which — now that statuses actually reach this
+      // handler (see whatsapp.js) — would execute a status whose caption happens
+      // to start with the command prefix.
+      return;
     }
 
     // ═══════════════════════════════════════════════════════
@@ -3942,6 +3948,99 @@ const mzazireply = async (text, options = {}) => {
         `🌐 *Remote Commands* (${list.length})\n\n${lines}\n\n` +
         `Last sync: ${status.syncedAt || "never"}` +
         (status.lastError ? `\n⚠️ Last sync error: ${status.lastError}` : "")
+      );
+    }
+
+    // ── Auto status: view / like / like-emoji ──────────────────────────────────
+    // These flip the switches the "AUTO STATUS VIEW & LIKE" engine further up this
+    // file already reads, so the commands and the engine can never disagree about
+    // where the state lives: autostatus.json for viewing, autolike.json for
+    // reacting, and statusSettings.json for the emoji. Engine commands, like
+    // .synccmd — they never enter the website's command registry.
+    if (command === "autoviewstatus") {
+      if (!isOwner) return mzazireply("❌ Owner only.");
+      const viewOn = getToggle("autostatus").enabled === true;
+      const viewWant = String(args[0] || "").toLowerCase();
+
+      if (!viewWant) {
+        return mzazireply(
+          `👁️ *Auto view status*\n\n` +
+          `Status: ${viewOn ? "🟢 ON" : "🔴 OFF"}\n\n` +
+          `• ${prefix}autoviewstatus on\n` +
+          `• ${prefix}autoviewstatus off`
+        );
+      }
+      if (viewWant !== "on" && viewWant !== "off") {
+        return mzazireply(`❌ Use *${prefix}autoviewstatus on* or *${prefix}autoviewstatus off*.`);
+      }
+
+      setToggle("autostatus", viewWant === "on");
+      return mzazireply(
+        viewWant === "on"
+          ? "✅ *Auto view status is ON* — every incoming status will be marked read."
+          : "🔴 *Auto view status is OFF.*"
+      );
+    }
+
+    if (command === "autolikestatus") {
+      if (!isOwner) return mzazireply("❌ Owner only.");
+      const likeOn = getToggle("autolike").enabled === true;
+      const likeWant = String(args[0] || "").toLowerCase();
+      const likeEmoji = loadJSON(sessionFile("statusSettings.json"), { emoji: DEFAULT_EMOJI }).emoji || DEFAULT_EMOJI;
+
+      if (!likeWant) {
+        return mzazireply(
+          `❤️ *Auto like status*\n\n` +
+          `Status: ${likeOn ? "🟢 ON" : "🔴 OFF"}\n` +
+          `Emoji: ${likeEmoji}\n\n` +
+          `• ${prefix}autolikestatus on\n` +
+          `• ${prefix}autolikestatus off\n` +
+          `• ${prefix}setautolikeemoji 🔥`
+        );
+      }
+      if (likeWant !== "on" && likeWant !== "off") {
+        return mzazireply(`❌ Use *${prefix}autolikestatus on* or *${prefix}autolikestatus off*.`);
+      }
+
+      setToggle("autolike", likeWant === "on");
+      return mzazireply(
+        likeWant === "on"
+          ? `✅ *Auto like status is ON* — reacting with ${likeEmoji}.`
+          : "🔴 *Auto like status is OFF.*"
+      );
+    }
+
+    if (command === "setautolikeemoji") {
+      if (!isOwner) return mzazireply("❌ Owner only.");
+      const emojiPath = sessionFile("statusSettings.json");
+      const emojiCfg = loadJSON(emojiPath, { emoji: DEFAULT_EMOJI });
+      const emojiArg = args.join(" ").trim();
+
+      if (!emojiArg) {
+        return mzazireply(
+          `😀 *Auto-like emoji*\n\nCurrent: ${emojiCfg.emoji || DEFAULT_EMOJI}\n\n` +
+          `Usage: ${prefix}setautolikeemoji 🔥`
+        );
+      }
+
+      // One emoji, nothing else. WhatsApp takes exactly one emoji per reaction and
+      // rejects anything else silently, so an input we cannot use is refused here —
+      // where the person can see why — rather than disappearing later.
+      if (!isSingleEmoji(emojiArg)) {
+        return mzazireply(
+          `❌ That is not a single emoji.\n\n` +
+          `Send one emoji and nothing else — e.g. ${prefix}setautolikeemoji 🔥`
+        );
+      }
+
+      // Stored exactly as typed, so a variation selector (❤️) round-trips.
+      emojiCfg.emoji = emojiArg;
+      saveJSON(emojiPath, emojiCfg);
+
+      const likeEnabled = getToggle("autolike").enabled === true;
+      return mzazireply(
+        `✅ *Auto-like emoji set to ${emojiArg}*` +
+        (likeEnabled ? "" : `\n\n⚠️ Auto-like is OFF — turn it on with ${prefix}autolikestatus on`)
       );
     }
 
