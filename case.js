@@ -1678,33 +1678,52 @@ You:`.trim();
 
     // ── ANTI-VIEW-ONCE (groups + DMs) ──────────────────────────────────────
     {
-      const _avUnwrapped = message?.ephemeralMessage?.message || message;
-      const _vOnce =
-        _avUnwrapped?.viewOnceMessage?.message ||
-        _avUnwrapped?.viewOnceMessageV2?.message ||
-        _avUnwrapped?.viewOnceMessageV2Extension?.message;
+      // Detect it without assuming one shape. A view-once reaches us as
+      // viewOnceMessage / viewOnceMessageV2 / viewOnceMessageV2Extension, sometimes
+      // nested in an ephemeralMessage — and a build that normalises on receive hands
+      // it over with the envelope already gone and viewOnce:true left on the media.
+      // Only the three named wrappers were checked, so that last shape matched
+      // nothing and this block never ran at all: no send, no error, no log line.
+      const _avEnvelope =
+        message?.viewOnceMessage?.message ||
+        message?.viewOnceMessageV2?.message ||
+        message?.viewOnceMessageV2Extension?.message ||
+        message?.ephemeralMessage?.message?.viewOnceMessage?.message ||
+        message?.ephemeralMessage?.message?.viewOnceMessageV2?.message ||
+        message?.ephemeralMessage?.message?.viewOnceMessageV2Extension?.message;
 
-      if (_vOnce && !m.key.fromMe) {
-        // messageType(), not Object.keys(_vOnce)[0]. The unwrapped payload carries
-        // messageContextInfo AHEAD of the real content, so the first key named that
-        // blob instead of the media — the exact trap NON_CONTENT_FIELDS was added
-        // for above. No send branch matched, so the media was downloaded, the caption
-        // was built, and nothing was ever sent, with no error left to log. That is
-        // why this looked like it only detected view-once messages. The scan covers a
-        // payload that leads with some other non-media field while still carrying media.
-        const _vType = (() => {
-          const _named = messageType(_vOnce);
-          if (["imageMessage", "videoMessage", "audioMessage"].includes(_named)) return _named;
-          return ["imageMessage", "videoMessage", "audioMessage"].find((k) => _vOnce[k]) || _named;
-        })();
+      const _avInner = unwrapMessage(message);
+      const _avMediaKey = ["imageMessage", "videoMessage", "audioMessage"].find((k) => _avInner?.[k]);
+      const _avFlagged = Boolean(_avMediaKey && _avInner?.[_avMediaKey]?.viewOnce);
+      const _isViewOnce = Boolean(_avEnvelope) || _avFlagged;
+      const _vOnce = _avEnvelope || (_avFlagged ? _avInner : null);
 
-        // Determine whether antiviewonce is enabled for this chat
-        const _avoEnabled = (() => {
-          if (isGroup) return getGroupSettings(sender).antiviewonce;
-          // DM: check per-chat or global dm_settings.json
-          const _dm = loadJSON(sessionFile("dm_settings.json"), {});
-          return _dm[sender]?.antiviewonce || _dm["__global__"]?.antiviewonce;
-        })();
+      // Determine whether antiviewonce is enabled for this chat
+      const _avoEnabled = (() => {
+        if (isGroup) return getGroupSettings(sender).antiviewonce;
+        // DM: check per-chat or global dm_settings.json
+        const _dm = loadJSON(sessionFile("dm_settings.json"), {});
+        return _dm[sender]?.antiviewonce || _dm["__global__"]?.antiviewonce;
+      })();
+
+      // A line whenever a view-once is present, whichever shape it came in, and
+      // whenever any media arrives in a chat where the switch is on. A view-once
+      // that quietly does nothing looks exactly like one that never arrived, and
+      // the console is the only place that can separate the two.
+      if (_isViewOnce || (_avoEnabled && _avMediaKey)) {
+        logSystem(
+          `AntiViewOnce: media=${_avMediaKey || "none"} envelope=${_avEnvelope ? "yes" : "no"} ` +
+          `flag=${_avFlagged ? "yes" : "no"} fromMe=${Boolean(m.key.fromMe)} ` +
+          `${isGroup ? "group" : "dm"} enabled=${Boolean(_avoEnabled)}`,
+          _isViewOnce ? "info" : "warn"
+        );
+      }
+
+      if (_isViewOnce && _avMediaKey && !m.key.fromMe) {
+        // The media key IS the type. Deriving it from the payload's first key is what
+        // named messageContextInfo and sent nothing at all, silently.
+        const _vType = _avMediaKey;
+
 
         if (_avoEnabled) {
           try {
@@ -1739,6 +1758,8 @@ You:`.trim();
               await mzazi.sendMessage(_avDest, { audio: _avBuf, mimetype: "audio/mp4", ptt: false });
               await mzazi.sendMessage(_avDest, { text: _avCaption, mentions: _avMentions });
             }
+
+            logSystem(`AntiViewOnce: re-sent ${_vType} to ${_avDest}`, "success");
           } catch (e) {
             logger.error("AntiViewOnce error:", e.message);
           }
