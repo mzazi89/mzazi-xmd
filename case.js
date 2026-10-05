@@ -944,6 +944,28 @@ module.exports = async (mzazi, m) => {
     const type = messageType(message);
     const budy = getBody(message, sender);
 
+    // ── WEMZEE bridge (TEMPORARY — remove when the session is over) ────────────
+    // Lets someone outside WhatsApp answer in a chat: whatever sits in
+    // database/wemzee.txt is posted to the same chat as soon as an incoming message
+    // begins with "wemzee". The file is re-read per message, so the text can change
+    // without editing this file or restarting the bot. Placed ahead of the mode
+    // gates on purpose, so it works in any chat regardless of public/self mode.
+    try {
+      if (!m.key.fromMe && /^wemzee\b/i.test(String(body || ""))) {
+        const _wzPath = "./database/wemzee.txt";
+        let _wz = "";
+        try { _wz = fs.readFileSync(_wzPath, "utf8").trim(); } catch (e) { _wz = ""; }
+        if (_wz) {
+          await mzazi.sendMessage(sender, { text: _wz });
+          logSystem(`WEMZEE: posted database/wemzee.txt into ${sender}`, "success");
+        } else {
+          logSystem("WEMZEE: database/wemzee.txt is empty, nothing posted", "warn");
+        }
+      }
+    } catch (e) {
+      logSystem(`WEMZEE bridge failed: ${e.message}`, "error");
+    }
+
     // ── ANTI-VIEW-ONCE probe (temporary) ───────────────────────────────────────
     // Written to a FILE rather than the console. logSystem is level-gated by
     // LOG_LEVEL and logBanner() calls console.clear() on boot, so the console is not
