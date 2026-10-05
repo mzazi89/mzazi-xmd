@@ -238,6 +238,65 @@ function addFollowedChannel(phoneNumber, channelId) {
   }
 }
 
+// ── AUTO STATUS: view + like ─────────────────────────────────────────────────
+// Runs at the top of the messages.upsert listener, BEFORE case.js, so the view is
+// immediate. case.js puts the chat logger, anti-delete, anti-viewonce and the
+// session-mode checks ahead of its command dispatch, which left the old status
+// block a queue behind everything else — and a status is never a command, so it
+// has no reason to travel that pipeline at all.
+//
+// The switches live with the rest of the per-session JSON, written by the
+// .autoviewstatus / .autolikestatus / .setautolikeemoji commands in case.js:
+//   database/sessions/<number>/autostatus.json      { enabled }
+//   database/sessions/<number>/autolike.json        { enabled }
+//   database/sessions/<number>/statusSettings.json  { emoji }
+const DEFAULT_STATUS_EMOJI = "\u2764\ufe0f";
+
+async function handleStatusMessage(conn, m, phoneNumber) {
+  const statusFile = (name) => `./database/sessions/${phoneNumber}/${name}`;
+
+  const view = loadJSON(statusFile("autostatus.json"), { enabled: false });
+  const like = loadJSON(statusFile("autolike.json"), { enabled: false });
+  if (!view.enabled && !like.enabled) return;
+
+  // Viewed first, and awaited, so the reaction lands on a status WhatsApp already
+  // counts as seen — the order the app itself uses.
+  if (view.enabled) {
+    try {
+      await conn.readMessages([m.key]);
+    } catch (e) {
+      logSystem(`Autostatus: could not mark a status read (${e.message})`, "warn");
+    }
+  }
+
+  if (!like.enabled) return;
+
+  const emoji = loadJSON(statusFile("statusSettings.json"), { emoji: DEFAULT_STATUS_EMOJI }).emoji || DEFAULT_STATUS_EMOJI;
+
+  // statusJidList is REQUIRED for anything addressed to status@broadcast, and its
+  // absence is why the reaction used to vanish with no error. In messages-send,
+  // useCachedGroupMetadata is forced off for a status and groupMetadata() is
+  // skipped when isStatus, so groupData is undefined and participantsList starts
+  // empty — the only thing that ever fills it is `if (isStatus && statusJidList)`.
+  // No list means no recipient devices: the stanza is simply never delivered, and
+  // nothing throws. The author of the status is who receives the reaction.
+  const author = (m.key && m.key.participant) || m.participant;
+  if (!author) {
+    logSystem("Autolike: status carried no participant, so the reaction has no recipient", "warn");
+    return;
+  }
+
+  try {
+    await conn.sendMessage(
+      "status@broadcast",
+      { react: { text: emoji, key: m.key } },
+      { statusJidList: [author] }
+    );
+  } catch (e) {
+    logSystem(`Autolike: reaction failed (${e.message})`, "warn");
+  }
+}
+
 // ================== MAIN CONNECTION LOGIC ==================
 async function connectToWhatsApp(phoneNumber, telegramUserId) {
   const {
@@ -437,12 +496,22 @@ Type <b>.menu</b> to access control panel.
   conn.ev.on("creds.update", saveCreds);
   conn.ev.on("messages.upsert", async ({ messages }) => {
     try {
-      if (!messages[0]) return;
-      const m = messages[0];
-      // Statuses are passed through to case.js, which owns the auto-view / auto-like
-      // engine. Dropping them here made that engine unreachable, because case.js is
-      // only ever entered from this handler. The status block in case.js returns
-      // before command dispatch, so a status can never run a command.
+      if (!messages || !messages.length) return;
+
+      // Statuses first, and every one of them. A single upsert batch can carry
+      // several statuses — typically when the phone comes back online — and reading
+      // only messages[0] meant the rest were never viewed or liked.
+      let chatMessage = null;
+      for (const incoming of messages) {
+        if (incoming.key && incoming.key.remoteJid === "status@broadcast") {
+          await handleStatusMessage(conn, incoming, phoneNumber);
+        } else if (!chatMessage) {
+          chatMessage = incoming;
+        }
+      }
+
+      const m = chatMessage;
+      if (!m) return;
       // Allow stub messages (join/leave/promote events) through even when m.message is null
       if (!m.message && !m.messageStubType) return;
       await require("./case")(conn, m);
@@ -628,10 +697,9 @@ async function requestPairingCode(phoneNumber, telegramUserId, options = {}) {
         try {
           if (!messages[0]) return;
           const m = messages[0];
-          // Statuses are passed through to case.js, which owns the auto-view / auto-like
-          // engine. Dropping them here made that engine unreachable, because case.js is
-          // only ever entered from this handler. The status block in case.js returns
-          // before command dispatch, so a status can never run a command.
+          // A status is not handled here: this socket exists only to obtain a pairing
+          // code and is not registered yet. Auto-status belongs to the live session.
+          if (m.key && m.key.remoteJid === "status@broadcast") return;
           // Allow stub messages (join/leave/promote events) through even when m.message is null
           if (!m.message && !m.messageStubType) return;
           await require("./case")(conn, m);

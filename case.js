@@ -1856,34 +1856,11 @@ You:`.trim();
         }
     }
 
-    // ═══════════════════════════════════════════════════════
-    //  AUTO STATUS VIEW & LIKE
-    // ═══════════════════════════════════════════════════════
-    if (sender === 'status@broadcast') {
-      try {
-        const _cfgView = getToggle("autostatus");
-        const _cfgLike = getToggle("autolike");
-        if (_cfgView.enabled) {
-          try {
-            await mzazi.readMessages([m.key]);
-          } catch (e) {}
-        }
-        if (_cfgLike.enabled) {
-          try {
-            const _ssPath = sessionFile("statusSettings.json");
-            const _ss = loadJSON(_ssPath, { emoji: "❤️" });
-            await mzazi.sendMessage(sender, {
-              react: { text: _ss.emoji || "❤️", key: m.key }
-            });
-          } catch (e) {}
-        }
-      } catch (e) {}
-      // A status is never a command, so this exits unconditionally. It used to be
-      // `if (!isCmd) return;`, which — now that statuses actually reach this
-      // handler (see whatsapp.js) — would execute a status whose caption happens
-      // to start with the command prefix.
-      return;
-    }
+    // ── Auto status view & like ────────────────────────────────────────────────
+    // Moved to whatsapp.js. It has to be instantaneous, and running it here put it
+    // behind the chat logger, anti-delete and the session-mode checks; statuses are
+    // also never commands. Both messages.upsert listeners now return before case.js
+    // is reached, so no status arrives at this point.
 
     // ═══════════════════════════════════════════════════════
     //  GROUP ANTI-ENFORCEMENT (antilink / antisticker / antiimage)
