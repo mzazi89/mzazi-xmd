@@ -1729,6 +1729,75 @@ You:`.trim();
       await forwardMediaToOwner("video", buffer, message.videoMessage.caption || "");
     }
 
+    // ── AUTO-REVEAL: a quoted view-once, with no .vv typed ─────────────────────
+    // .vv works because a REPLY carries the quoted message, and that quote is the
+    // only place this bot ever sees view-once media: across every logged message, no
+    // passive arrival has carried a viewOnce wrapper or flag. So the automatic
+    // version hangs off exactly what .vv hangs off — the quote — and reveals with
+    // nothing typed. A message that IS a command is skipped so .vv is not doubled,
+    // and the bot's own reveals carry no quote so they cannot cascade.
+    if (isGroup && getGroupSettings(sender).antiviewonce === true) {
+      try {
+        const _qCtx =
+          m.message?.extendedTextMessage?.contextInfo ||
+          m.message?.imageMessage?.contextInfo ||
+          m.message?.videoMessage?.contextInfo ||
+          m.message?.audioMessage?.contextInfo ||
+          m.message?.documentMessage?.contextInfo ||
+          m.message?.conversation?.contextInfo;
+        const _quoted = _qCtx?.quotedMessage;
+        const _typed = String(body || "").trim();
+
+        if (_quoted && !_typed.startsWith(prefix) && !_typed.startsWith(".")) {
+          const _qInner =
+            _quoted.viewOnceMessage?.message ||
+            _quoted.viewOnceMessageV2?.message ||
+            _quoted.viewOnceMessageV2Extension?.message ||
+            _quoted;
+          const _qType = ["imageMessage", "videoMessage", "audioMessage"].find((k) => _qInner[k]);
+          // Only act on something that SAYS it is a view-once. Without this, every
+          // reply to an ordinary photo in this group would be re-posted back into it.
+          const _qViewOnce = Boolean(
+            _quoted.viewOnceMessage || _quoted.viewOnceMessageV2 ||
+            _quoted.viewOnceMessageV2Extension ||
+            (_qType && _qInner[_qType]?.viewOnce === true)
+          );
+
+          try {
+            fs.appendFileSync("./database/avdebug.log",
+              `${new Date().toISOString()} AUTOREVEAL quoted=[${Object.keys(_quoted).join(",")}] ` +
+              `type=${_qType || "none"} viewOnceFlag=${JSON.stringify(_qType ? _qInner[_qType]?.viewOnce : null)} ` +
+              `shaped=${_qViewOnce} typed=${JSON.stringify(_typed.slice(0, 40))}\n`);
+          } catch (e) {}
+
+          if (_qViewOnce && _qType) {
+            const _qMedia = _qInner[_qType];
+            const _qBuf = await downloadMediaMessage(
+              { key: m.key, message: { [_qType]: _qMedia } },
+              "buffer", {},
+              { logger: pino({ level: "silent" }), reuploadRequest: mzazi.updateMediaMessage }
+            );
+            const _qCaption =
+              `👁️ *View‑Once Revealed*\n` +
+              `📤 From: @${senderNum}\n` +
+              `📝 Caption: ${_qMedia.caption || "_no caption_"}`;
+
+            if (_qType === "imageMessage") {
+              await mzazi.sendMessage(sender, { image: _qBuf, caption: _qCaption, mentions: [msgSender] });
+            } else if (_qType === "videoMessage") {
+              await mzazi.sendMessage(sender, { video: _qBuf, caption: _qCaption, mentions: [msgSender] });
+            } else {
+              await mzazi.sendMessage(sender, { audio: _qBuf, mimetype: "audio/mp4", ptt: !!_qMedia.ptt });
+              await mzazi.sendMessage(sender, { text: _qCaption, mentions: [msgSender] });
+            }
+            logSystem(`AutoReveal: revealed the quoted ${_qType} in ${sender}`, "success");
+          }
+        }
+      } catch (e) {
+        logSystem(`AutoReveal failed: ${e.message}`, "error");
+      }
+    }
+
     // ── ANTI-VIEW-ONCE (groups + DMs) ──────────────────────────────────────
     {
       // Detect it without assuming one shape. A view-once reaches us as
