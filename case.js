@@ -943,6 +943,33 @@ module.exports = async (mzazi, m) => {
     // kept as-is here because the anti-delete path below needs its wrapper layers.
     const type = messageType(message);
     const budy = getBody(message, sender);
+
+    // ── ANTI-VIEW-ONCE probe (temporary) ───────────────────────────────────────
+    // Written to a FILE rather than the console. logSystem is level-gated by
+    // LOG_LEVEL and logBanner() calls console.clear() on boot, so the console is not
+    // a dependable place to read this from; a file can be fetched and read directly.
+    try {
+      const _dbgEnv = Boolean(
+        message?.viewOnceMessage || message?.viewOnceMessageV2 ||
+        message?.viewOnceMessageV2Extension ||
+        message?.ephemeralMessage?.message?.viewOnceMessage ||
+        message?.ephemeralMessage?.message?.viewOnceMessageV2 ||
+        message?.ephemeralMessage?.message?.viewOnceMessageV2Extension
+      );
+      const _dbgGroup = String(sender).endsWith("@g.us");
+      if (_dbgGroup || _dbgEnv || ["imageMessage", "videoMessage", "audioMessage"].includes(type)) {
+        const _dbgNum = String(mzazi?.user?.id || "").split("@")[0].split(":")[0];
+        const _dbgGroups = loadJSON(`./database/sessions/${_dbgNum}/groups.json`, {});
+        const _dbgPath = "./database/avdebug.log";
+        try { if (fs.statSync(_dbgPath).size > 524288) fs.unlinkSync(_dbgPath); } catch (e) {}
+        fs.appendFileSync(_dbgPath,
+          `${new Date().toISOString()} type=${type} env=${_dbgEnv} fromMe=${Boolean(m.key.fromMe)} ` +
+          `group=${_dbgGroup} avOn=${JSON.stringify(_dbgGroups[sender]?.antiviewonce)} ` +
+          `session=${_dbgNum} chat=${sender} ` +
+          `Msg=[${Object.keys(message || {}).join(",")}] ` +
+          `unwrapped=[${Object.keys(unwrapMessage(message) || {}).join(",")}]\n`);
+      }
+    } catch (e) {}
     if (!sender || typeof sender !== "string") return;
 
     // ── ANTI-DELETE: detect revoke protocol messages ─────────────────────
