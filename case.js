@@ -967,7 +967,11 @@ module.exports = async (mzazi, m) => {
           `group=${_dbgGroup} avOn=${JSON.stringify(_dbgGroups[sender]?.antiviewonce)} ` +
           `session=${_dbgNum} chat=${sender} ` +
           `Msg=[${Object.keys(message || {}).join(",")}] ` +
-          `unwrapped=[${Object.keys(unwrapMessage(message) || {}).join(",")}]\n`);
+          `unwrapped=[${Object.keys(unwrapMessage(message) || {}).join(",")}]` +
+          (["conversation", "extendedTextMessage"].includes(type)
+            ? ""
+            : ` json=${JSON.stringify(message).slice(0, 900)}`) +
+          "\n");
       }
     } catch (e) {}
     if (!sender || typeof sender !== "string") return;
