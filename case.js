@@ -3989,7 +3989,7 @@ const mzazireply = async (text) => {
         return mzazireply(`❌ Could not load settings/MessageBuilderNew.js\n${e.message}`);
       }
 
-      const { Button, ButtonV2, Carousel, AIRich, Toolkit } = MB;
+      const { Button, ButtonV2, Carousel, AIRich, Toolkit, Quick } = MB;
       const only = String(args[0] || "").toLowerCase();
       const want = (name) => !only || only === name;
       const results = [];
@@ -4092,12 +4092,61 @@ const mzazireply = async (text) => {
         await r.send(sender);
       });
 
+      // ── 7. the Toolkit utilities added in this round ────────────────────────
+      if (want("utils")) await run("Toolkit (new utilities)", async () => {
+        if (Toolkit.chunk([1, 2, 3, 4, 5], 2).length !== 3) throw new Error("chunk");
+        if (Toolkit.toJid("254712") !== "254712@s.whatsapp.net") throw new Error("toJid");
+        if (Toolkit.numberFromJid("254712:3@s.whatsapp.net") !== "254712") throw new Error("numberFromJid");
+        if (Toolkit.humanDuration(95000) !== "1m 35s") throw new Error("humanDuration");
+        if (Toolkit.clamp(99, 0, 10) !== 10) throw new Error("clamp");
+        if (!Toolkit.bold("x").startsWith("*")) throw new Error("bold");
+        if (!Toolkit.randomId("t-").startsWith("t-")) throw new Error("randomId");
+        Toolkit.escapeMarkdown("*x* _y_");
+        await Toolkit.sleep(1);
+      });
+
+      // ── 8. the extra flows (names not verified against a live client) ───────
+      if (want("flows2")) await run("Button (extra flows)", async () => {
+        const b = new Button(mzazi);
+        b.setTitle("ALLTEST — extra flows").setBody("7 further native flows");
+        b.addPaymentInfo()
+          .addOrderStatus({ reference_id: "alltest" })
+          .addProductInquiry({ product_id: "0", business_phone_number: "254700000000" })
+          .addNewsletterFollow({ newsletter_jid: "120363430368431358@newsletter" })
+          .addCallPermission({ call_type: "audio" })
+          .addMetaAi({ prompt: "alltest" })
+          .addDocumentPicker();
+        await b.send(sender);
+      });
+
+      // ── 9. Quick — the message types the library never wrapped ──────────────
+      if (want("quick")) await run("Quick (poll/location/contact/sticker/event)", async () => {
+        const q = new Quick(mzazi);
+        await q.poll(sender, { name: "ALLTEST poll", values: ["One", "Two", "Three"], selectableCount: 1 });
+        await q.location(sender, { degreesLatitude: -1.286389, degreesLongitude: 36.817223, name: "Nairobi", address: "Kenya" });
+        await q.contact(sender, {
+          displayName: "MZAZI",
+          contacts: [{
+            displayName: "MZAZI Support",
+            vcard: "BEGIN:VCARD\\nVERSION:3.0\\nFN:MZAZI Support\\nTEL;type=CELL;type=VOICE;waid=254700000000:+254700000000\\nEND:VCARD",
+          }],
+        });
+        await q.sticker(sender, "./media/menu.jpg");
+        await q.event(sender, {
+          name: "ALLTEST event",
+          description: "sent by .alltest",
+          startDate: new Date(Date.now() + 86400000),
+          endDate: new Date(Date.now() + 90000000),
+        });
+        await q.react(sender, m.key, "🧪");
+      });
+
       const secs = ((Date.now() - started) / 1000).toFixed(1);
       const passed = results.filter((r) => r.startsWith("✅")).length;
       return mzazireply(
         `🧪 *ALLTEST* — ${passed}/${results.length} groups ok in ${secs}s\n\n` +
         results.join("\n") +
-        (only ? "" : "\n\nGroups: toolkit, button, flows, v2, carousel, rich")
+        (only ? "" : "\n\nGroups: toolkit, button, flows, v2, carousel, rich, utils, flows2, quick")
       );
     }
 
