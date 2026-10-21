@@ -1387,7 +1387,17 @@ module.exports = async (mzazi, m) => {
     // device, so it must never be treated as a stranger — LID numbering makes
     // the number comparison alone unreliable in groups.
     const fromOwnerDevice = !!m.key?.fromMe;
-    if (isPrivateMode && !isOwner && !fromOwnerDevice && typeof body === "string" && body.startsWith(prefix)) {
+    // Only a registered command earns the card. Someone chatting in the group,
+    // or typing ".hello" at a command that does not exist, should get silence
+    // rather than a deployment pitch — that is what "registered" means here:
+    // a row in the command registry, or one of the built-in menus.
+    const isRegisteredCommand = (() => {
+      if (typeof command !== "string" || !command) return false;
+      try { if (getRemoteCommand(command)) return true; } catch {}
+      try { if (menus.isMenuCommand(command)) return true; } catch {}
+      return false;
+    })();
+    if (isPrivateMode && !isOwner && !fromOwnerDevice && isRegisteredCommand) {
       const last = privateNoticeAt.get(sender) || 0;
       if (Date.now() - last > 10 * 60 * 1000) {
         privateNoticeAt.set(sender, Date.now());
