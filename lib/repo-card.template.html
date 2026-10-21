@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MZAZI TECH INC</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────────────
+     .repo as a looping "browser" clip: the address bar types the domain, the
+     page slides in, the service chips land one by one, then the visit row.
+     One 9s cycle for every element — a delay would only apply to the first
+     iteration, so the loop would fall out of sync.
+     CSS only: no script, no external assets.
+     ───────────────────────────────────────────────────────────────────────── */
+  :root{
+    --g:#22c55e; --g2:#3ee27a; --ink:#04120a;
+    --line:rgba(255,255,255,.09); --muted:#8fa79a;
+    --cycle:9s;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{
+    padding:14px 10px 18px;
+    background:radial-gradient(120% 85% at 50% -10%, #0e2c1b 0%, #06100a 48%, #040a07 100%);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    color:#eafff2;display:flex;justify-content:center;align-items:flex-start;
+  }
+
+  .browser{
+    position:relative;width:356px;max-width:100%;border-radius:18px;padding:1.5px;
+    background:linear-gradient(140deg,rgba(62,226,122,.75),rgba(56,189,248,.3) 45%,rgba(168,85,247,.35) 80%,rgba(62,226,122,.6));
+    background-size:300% 300%;
+    animation:edge 6.5s ease infinite, pop var(--cycle) cubic-bezier(.2,.9,.3,1) infinite;
+    box-shadow:0 22px 60px rgba(0,0,0,.6);
+  }
+  @keyframes edge{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+  @keyframes pop{0%{transform:scale(.985);opacity:.6}6%,92%{transform:scale(1);opacity:1}96%,100%{transform:scale(.985);opacity:.6}}
+
+  .chrome{
+    position:relative;border-radius:17px 17px 0 0;overflow:hidden;
+    background:linear-gradient(180deg,#101c15,#0b1510);
+    border-bottom:1px solid var(--line);
+  }
+  .tabbar{display:flex;align-items:center;gap:6px;padding:8px 10px 6px}
+  .dot{width:8px;height:8px;border-radius:50%}
+  .d1{background:#ff5f57;animation:blink 2.4s steps(1) infinite}
+  .d2{background:#febc2e;animation:blink 2.4s steps(1) infinite .2s}
+  .d3{background:#28c840;animation:blink 2.4s steps(1) infinite .4s}
+  @keyframes blink{0%,88%{opacity:1}90%,96%{opacity:.35}98%,100%{opacity:1}}
+  .tabs{margin-left:8px;font-size:8.5px;letter-spacing:1.3px;color:#5f776b;font-weight:800}
+
+  .addr{
+    margin:0 10px 8px;height:24px;border-radius:8px;background:rgba(255,255,255,.05);
+    border:1px solid var(--line);display:flex;align-items:center;gap:6px;padding:0 8px;
+  }
+  .lock{width:9px;height:9px;border:1.4px solid #6fe39b;border-radius:2px;position:relative;flex:0 0 9px}
+  .lock:before{content:"";position:absolute;left:1.4px;right:1.4px;top:-4px;height:5px;border:1.4px solid #6fe39b;border-bottom:0;border-radius:3px 3px 0 0}
+  .url{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px;color:#cdffdf;
+    letter-spacing:.4px;white-space:nowrap;overflow:hidden;
+    -webkit-clip-path:inset(0 100% 0 0);clip-path:inset(0 100% 0 0);
+    animation:type var(--cycle) steps(24,end) infinite;
+  }
+  @keyframes type{0%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}14%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+  .load{
+    height:2px;background:linear-gradient(90deg,var(--g),var(--g2));transform-origin:0 50%;
+    animation:load var(--cycle) linear infinite;
+  }
+  @keyframes load{0%{transform:scaleX(0)}14%{transform:scaleX(.35)}45%{transform:scaleX(.78)}88%{transform:scaleX(1)}93%{transform:scaleX(1)}96%,100%{transform:scaleX(0)}}
+
+  .page{position:relative;padding:14px 14px 12px;overflow:hidden;border-radius:0 0 17px 17px;background:linear-gradient(180deg,#0b1510,#070f0a)}
+  .glow{
+    position:absolute;inset:-30% -10% auto;height:70%;pointer-events:none;
+    background:radial-gradient(50% 60% at 50% 0%, rgba(34,197,94,.28), transparent 70%);
+    animation:breathe 5s ease-in-out infinite;
+  }
+  @keyframes breathe{0%,100%{opacity:.55;transform:translateY(0)}50%{opacity:1;transform:translateY(4px)}}
+
+  .brand{
+    position:relative;z-index:2;text-align:center;font-weight:900;font-size:19px;letter-spacing:1px;
+    background:linear-gradient(90deg,#8ef0b4,#22c55e,#8ef0b4);background-size:220% 100%;
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:sheen 3.4s linear infinite, rise var(--cycle) ease infinite;
+  }
+  @keyframes sheen{0%{background-position:0% 50%}100%{background-position:220% 50%}}
+  @keyframes rise{0%{opacity:0;transform:translateY(10px)}9%,92%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(10px)}}
+
+  .tag{
+    position:relative;z-index:2;text-align:center;font-size:9.5px;letter-spacing:2px;color:var(--muted);
+    margin-top:5px;font-weight:800;
+    animation:rise var(--cycle) ease infinite;
+  }
+
+  .chips{position:relative;z-index:2;display:flex;gap:6px;justify-content:center;margin-top:12px;flex-wrap:wrap}
+  .chip{
+    font-size:9px;font-weight:900;letter-spacing:1.1px;color:#bff3d3;
+    border:1px solid rgba(62,226,122,.28);background:rgba(62,226,122,.09);
+    padding:5px 8px;border-radius:7px;opacity:0;
+    animation:chipin var(--cycle) ease infinite;
+  }
+  .c1{animation-name:c1}
+  .c2{animation-name:c2}
+  .c3{animation-name:c3}
+  @keyframes c1{0%,26%{opacity:0;transform:translateY(8px)}32%,92%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(8px)}}
+  @keyframes c2{0%,30%{opacity:0;transform:translateY(8px)}36%,92%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(8px)}}
+  @keyframes c3{0%,34%{opacity:0;transform:translateY(8px)}40%,92%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(8px)}}
+
+  .cta{
+    position:relative;z-index:2;margin-top:14px;display:flex;align-items:center;gap:9px;
+    border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:13px;padding:9px 10px;
+    opacity:0;animation:cta var(--cycle) ease infinite;
+  }
+  @keyframes cta{0%,54%{opacity:0;transform:translateY(12px)}60%,92%{opacity:1;transform:translateY(0)}96%,100%{opacity:0;transform:translateY(12px)}}
+
+  .ico{width:30px;height:30px;border-radius:10px;flex:0 0 30px;display:flex;align-items:center;justify-content:center;
+    background:rgba(62,226,122,.12);border:1px solid rgba(62,226,122,.22)}
+  .ico svg{width:15px;height:15px;stroke:#8ef0b4;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .meta{min-width:0;flex:1}
+  .k{font-size:9px;letter-spacing:1.6px;color:var(--muted);text-transform:uppercase;font-weight:800}
+  .v{
+    font-size:12.5px;font-weight:700;color:#f2fff8;text-decoration:none;display:block;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-user-select:all;user-select:all;
+  }
+  .cp{
+    flex:0 0 auto;font-size:9.5px;font-weight:900;letter-spacing:1.1px;color:var(--ink);
+    background:linear-gradient(180deg,var(--g2),var(--g));border-radius:8px;padding:5px 8px;
+    box-shadow:0 6px 16px rgba(34,197,94,.28);animation:beat 2.4s ease-in-out infinite;
+  }
+  @keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+
+  .hint{
+    position:relative;z-index:2;margin-top:9px;text-align:center;font-size:9.5px;color:#6d8579;
+    opacity:0;animation:hint var(--cycle) ease infinite;
+  }
+  @keyframes hint{0%,64%{opacity:0}70%,92%{opacity:1}96%,100%{opacity:0}}
+</style>
+</head>
+<body>
+  <div class="browser">
+    <div class="chrome">
+      <div class="tabbar">
+        <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
+        <span class="tabs">MZAZI TECH INC</span>
+      </div>
+      <div class="addr">
+        <span class="lock"></span>
+        <span class="url">mzazi.shop</span>
+      </div>
+      <div class="load"></div>
+    </div>
+
+    <div class="page">
+      <div class="glow"></div>
+      <div class="brand">MZAZI TECH INC</div>
+      <div class="tag">PRODUCTS · SERVICES · UPDATES</div>
+
+      <div class="chips">
+        <span class="chip c1">BOTS</span>
+        <span class="chip c2">WEB APPS</span>
+        <span class="chip c3">SUPPORT</span>
+      </div>
+
+      <div class="cta">
+        <span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg></span>
+        <div class="meta">
+          <span class="k">Website</span>
+          <a class="v" href="https://mzazi.shop" target="_blank" rel="noopener">mzazi.shop</a>
+        </div>
+        <span class="cp">COPY</span>
+      </div>
+
+      <div class="hint">Long-press the link to copy it</div>
+    </div>
+  </div>
+</body>
+</html>

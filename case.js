@@ -4333,6 +4333,31 @@ const mzazireply = async (text) => {
           // depend on a config value (xmd_bot_profiles / BOT_PROFILES) that nothing
           // else in this bot reads, and would silently do nothing if it resolved
           // to anything else. See the note in lib/menus.js.
+          // ── .repo → the browser clip ────────────────────────────────────
+          // Same idea as .menu: an animated document instead of the plain text
+          // card. If the primitive is refused, the stored .repo body still runs
+          // below, so the command keeps working on old clients.
+          if (command === "repo") {
+            let repoCard = null;
+            try {
+              repoCard = require("./lib/mzaziPhoneMenu");
+            } catch (e) {
+              console.log(`[repo] module unavailable — ${e.message}`);
+            }
+            if (repoCard && typeof repoCard.sendRepo === "function") {
+              try {
+                const res = await repoCard.sendRepo(mzazi, sender, { botName });
+                if (res && res.ok) {
+                  console.log(`[repo] card sent (${res.bytes} bytes)`);
+                  return;
+                }
+                console.log(`[repo] card skipped — ${(res && res.error) || "unknown"}`);
+              } catch (e) {
+                console.log(`[repo] card failed — ${e.message}`);
+              }
+            }
+          }
+
           // ── .menu → the phone UI ─────────────────────────────────────────
           // The main menu is now a self-contained HTML phone mockup sent through
           // AIRich (lib/mzaziPhoneMenu). It is attempted BEFORE the stored rows,
