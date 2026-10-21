@@ -1377,24 +1377,12 @@ module.exports = async (mzazi, m) => {
     }
     // ── private bot, stranger typing ────────────────────────────────────────
     // A private bot used to answer with silence, which reads as "broken". It now
-    // says it in one line and puts the three ways to get their own behind
-    // buttons: the Telegram pairing bot, a call, and email.
-    //
-    // Sent with the legacy ButtonV2 builder (buttonsMessage + nativeFlowInfo),
-    // which is what this account renders reliably; the interactive card and a
-    // plain line stay behind it as fallbacks. Throttled per chat so a spammer
-    // cannot turn it into a wall of cards.
+    // sends a short animated HTML card — "I am MZAZI XMD bot, am private, am
+    // responding to my owner only" — with the three ways to deploy your own
+    // underneath. No buttons: the card is a document, so it renders the same on
+    // every client. One card per chat per ten minutes.
     const privateNoticeAt = (globalThis.__mzPrivateNotice ||= new Map());
     const isPrivateMode = currentSettings.selfMode || !currentSettings.publicMode;
-    const buttonV2 = () => {
-      for (const id of ["mzazibaileys", "@whiskeysockets/baileys"]) {
-        try {
-          const mod = require(id);
-          if (mod && mod.ButtonV2) return mod.ButtonV2;
-        } catch {}
-      }
-      return null;
-    };
     // The owner typing from their own phone arrives as fromMe on this linked
     // device, so it must never be treated as a stranger — LID numbering makes
     // the number comparison alone unreliable in groups.
@@ -1403,55 +1391,29 @@ module.exports = async (mzazi, m) => {
       const last = privateNoticeAt.get(sender) || 0;
       if (Date.now() - last > 10 * 60 * 1000) {
         privateNoticeAt.set(sender, Date.now());
-        const line = "🔒 *Private bot* — deploy your own MZAZI XMD:";
-        const flow = (name, params) => ({
-          buttonId: name === "cta_call" ? "call" : name + params.display_text.length,
-          buttonText: { displayText: params.display_text },
-          type: 2,
-          nativeFlowInfo: { name, paramsJson: JSON.stringify(params) },
-        });
-        const telegram = { display_text: "💬 Telegram", url: "https://t.me/mzazixmdbot" };
-        const call = { display_text: "📞 Call", phone_number: "254741388986" };
-        const mail = { display_text: "✉️ Email", url: "mailto:mzazitechinc@gmail.com" };
-
-        const Btn = buttonV2();
         let sent = false;
-        if (Btn) {
-          try {
-            const b = new Btn(mzazi);
-            b.setBody(line).setFooter("MZAZI TECH INC");
-            b.addRawButton(flow("cta_url", telegram));
-            b.addRawButton(flow("cta_call", call));
-            b.addRawButton(flow("cta_url", mail));
-            await b.send(sender);
-            sent = true;
-            console.log(`[private] buttonv2 sent to ${sender}`);
-          } catch (e) {
-            console.log(`[private] buttonv2 failed (${e.message})`);
-          }
-        }
-        if (!sent) {
-          try {
-            await sendInteractiveMessage(mzazi, sender, {
-              title: "🔒 PRIVATE BOT",
-              text: line,
-              footer: "MZAZI TECH INC",
-              interactiveButtons: [
-                { name: "cta_url", buttonParamsJson: JSON.stringify(telegram) },
-                { name: "cta_call", buttonParamsJson: JSON.stringify(call) },
-                { name: "cta_url", buttonParamsJson: JSON.stringify(mail) },
-              ],
-            });
-            sent = true;
-            console.log(`[private] card sent to ${sender}`);
-          } catch (e) {
-            console.log(`[private] card failed (${e.message})`);
-          }
+        try {
+          const card = require("./lib/mzaziPhoneMenu");
+          const res = await card.sendPrivate(mzazi, sender, { botName });
+          sent = !!(res && res.ok);
+          console.log(
+            sent
+              ? `[private] card sent to ${sender} (${res.bytes} bytes)`
+              : `[private] card skipped — ${(res && res.error) || "unknown"}`
+          );
+        } catch (e) {
+          console.log(`[private] card unavailable — ${e.message}`);
         }
         if (!sent) {
           try {
             await mzazi.sendMessage(sender, {
-              text: `${line}\n\n💬 https://t.me/mzazixmdbot\n📞 +254741388986\n✉️ mzazitechinc@gmail.com`,
+              text:
+                "🔒 *I AM MZAZI XMD BOT, AM PRIVATE,*\n" +
+                "responding to my owner only.\n\n" +
+                "If you need this, use this to deploy:\n" +
+                "💬 https://t.me/mzazixmdbot\n" +
+                "📞 +254741388986\n" +
+                "✉️ mzazitechinc@gmail.com",
             });
           } catch {}
         }

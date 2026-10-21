@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MZAZI XMD — private</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────────────
+     A 9-second looping "video": the sentence types itself in, the three ways
+     to deploy rise underneath, the timeline fills, then the frame cuts and
+     plays again. Every element runs the SAME 9s cycle — a delay would only
+     apply to the first iteration, so the loop would drift apart.
+     CSS only: no script, no external assets.
+     ───────────────────────────────────────────────────────────────────────── */
+  :root{
+    --g:#22c55e; --g2:#3ee27a; --ink:#04120a;
+    --line:rgba(255,255,255,.09); --muted:#8fa79a;
+    --cycle:9s;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{
+    padding:14px 10px 18px;
+    background:radial-gradient(120% 80% at 50% -10%, #0d2a1a 0%, #06100a 45%, #040a07 100%);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    color:#e8fff1;display:flex;justify-content:center;align-items:flex-start;
+  }
+
+  .player{
+    position:relative;width:356px;max-width:100%;border-radius:22px;padding:1.5px;
+    background:linear-gradient(140deg,rgba(62,226,122,.7),rgba(56,189,248,.25) 40%,rgba(168,85,247,.35) 75%,rgba(62,226,122,.6));
+    background-size:300% 300%;
+    animation:edge 7s ease infinite, zoom var(--cycle) ease-in-out infinite;
+    box-shadow:0 24px 64px rgba(0,0,0,.6);
+  }
+  @keyframes edge{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+  @keyframes zoom{0%{transform:scale(1)}50%{transform:scale(1.012)}92%{transform:scale(1.02)}100%{transform:scale(1)}}
+
+  .frame{
+    position:relative;border-radius:21px;overflow:hidden;
+    background:linear-gradient(180deg,#0b1510 0%,#070f0a 100%);
+    padding:0 0 12px;
+    /* Reserved height: the links arrive at 5.3s, and without this the frame
+       would grow mid-play like a page loading instead of a video shot. */
+    min-height:404px;
+  }
+
+  .aura{
+    position:absolute;inset:-25%;pointer-events:none;
+    background:
+      radial-gradient(38% 30% at 20% 25%, rgba(34,197,94,.25), transparent 70%),
+      radial-gradient(34% 26% at 82% 70%, rgba(56,189,248,.16), transparent 70%),
+      radial-gradient(30% 24% at 55% 92%, rgba(168,85,247,.15), transparent 72%);
+    filter:blur(7px);animation:drift 11s ease-in-out infinite alternate;
+  }
+  @keyframes drift{
+    0%{transform:translate3d(-2%,-1%,0) scale(1)}
+    50%{transform:translate3d(2%,1.5%,0) scale(1.06)}
+    100%{transform:translate3d(-1%,2%,0) scale(1.02)}
+  }
+  .scan{
+    position:absolute;left:0;right:0;height:26%;top:-30%;pointer-events:none;
+    background:linear-gradient(180deg,transparent,rgba(62,226,122,.10),transparent);
+    animation:scan 4.6s linear infinite;
+  }
+  @keyframes scan{0%{top:-30%}100%{top:110%}}
+  .grain{
+    position:absolute;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:screen;
+    background-image:radial-gradient(rgba(255,255,255,.9) .5px, transparent .6px);
+    background-size:3px 3px;animation:jitter .38s steps(2) infinite;
+  }
+  @keyframes jitter{0%{transform:translate(0,0)}50%{transform:translate(-1px,1px)}100%{transform:translate(1px,-1px)}}
+
+  .bar{
+    position:relative;z-index:3;display:flex;align-items:center;gap:8px;
+    padding:10px 14px 6px;font-size:9.5px;letter-spacing:1.6px;color:#9fdcb6;font-weight:800;
+  }
+  .rec{width:7px;height:7px;border-radius:50%;background:#ff4d4d;box-shadow:0 0 8px #ff4d4d;animation:rec 1.6s ease-in-out infinite}
+  @keyframes rec{0%,100%{opacity:1}50%{opacity:.25}}
+  .bar .tc{margin-left:auto;color:#6fe39b;letter-spacing:2px;font-variant-numeric:tabular-nums}
+
+  .stage{position:relative;z-index:2;padding:6px 16px 0}
+  .ln{
+    display:block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13px;line-height:1.78;font-weight:700;letter-spacing:.5px;color:#eafff2;
+    white-space:nowrap;overflow:hidden;
+    -webkit-clip-path:inset(0 100% 0 0);clip-path:inset(0 100% 0 0);
+    animation-duration:var(--cycle);animation-iteration-count:infinite;animation-timing-function:steps(30,end);
+    text-shadow:0 0 16px rgba(62,226,122,.22);
+  }
+  .ln.small{font-size:11.5px;color:#a9c9b7;font-weight:600}
+  .ln.gold{color:var(--g2)}
+
+  .ln.l1{animation-name:k1}
+  .ln.l2{animation-name:k2}
+  .ln.l3{animation-name:k3}
+  .ln.l4{animation-name:k4}
+  .ln.l5{animation-name:k5}
+  .ln.l6{animation-name:k6}
+  @keyframes k1{0%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}10%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+  @keyframes k2{0%,8%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}18%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+  @keyframes k3{0%,17%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}27%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+  @keyframes k4{0%,26%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}36%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+  @keyframes k5{0%,35%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}45%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+  @keyframes k6{0%,44%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}54%,93%{clip-path:inset(0 0 0 0);-webkit-clip-path:inset(0 0 0 0)}96%,100%{clip-path:inset(0 100% 0 0);-webkit-clip-path:inset(0 100% 0 0)}}
+
+  .caret{
+    display:inline-block;width:8px;height:14px;background:var(--g2);margin-left:6px;
+    transform:translateY(2px);box-shadow:0 0 12px rgba(62,226,122,.85);
+    animation:blink .82s steps(1) infinite;
+  }
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+  .links{position:relative;z-index:2;margin:14px 14px 0;display:flex;flex-direction:column;gap:8px}
+  .row{
+    background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:13px;
+    padding:9px 10px;display:flex;align-items:center;gap:9px;
+    opacity:0;transform:translateY(14px) scale(.985);
+    animation-duration:var(--cycle);animation-iteration-count:infinite;animation-timing-function:ease;
+  }
+  .row.r1{animation-name:r1}
+  .row.r2{animation-name:r2}
+  .row.r3{animation-name:r3}
+  @keyframes r1{0%,53%{opacity:0;transform:translateY(14px) scale(.985)}59%,93%{opacity:1;transform:translateY(0) scale(1)}96%,100%{opacity:0;transform:translateY(14px) scale(.985)}}
+  @keyframes r2{0%,56%{opacity:0;transform:translateY(14px) scale(.985)}62%,93%{opacity:1;transform:translateY(0) scale(1)}96%,100%{opacity:0;transform:translateY(14px) scale(.985)}}
+  @keyframes r3{0%,59%{opacity:0;transform:translateY(14px) scale(.985)}65%,93%{opacity:1;transform:translateY(0) scale(1)}96%,100%{opacity:0;transform:translateY(14px) scale(.985)}}
+
+  .ico{
+    width:30px;height:30px;border-radius:10px;flex:0 0 30px;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(62,226,122,.12);border:1px solid rgba(62,226,122,.22);
+  }
+  .ico svg{width:15px;height:15px;stroke:#8ef0b4;fill:none;stroke-width:1.8;
+    stroke-linecap:round;stroke-linejoin:round}
+  .meta{min-width:0;flex:1}
+  .k{font-size:9px;letter-spacing:1.6px;color:var(--muted);text-transform:uppercase;font-weight:800}
+  .v{
+    font-size:12.5px;color:#f2fff8;font-weight:700;text-decoration:none;display:block;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    -webkit-user-select:all;user-select:all;
+  }
+  .v:active{color:var(--g2)}
+  .cp{
+    flex:0 0 auto;font-size:9.5px;font-weight:900;letter-spacing:1.1px;color:var(--ink);
+    background:linear-gradient(180deg,var(--g2),var(--g));border-radius:8px;padding:5px 8px;
+    box-shadow:0 6px 16px rgba(34,197,94,.28);animation:beat 2.4s ease-in-out infinite;
+  }
+  @keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+
+  .hint{
+    position:relative;z-index:2;margin:10px 16px 0;font-size:10px;color:#7b9488;letter-spacing:.3px;
+    opacity:0;animation-duration:var(--cycle);animation-iteration-count:infinite;animation-name:hint;
+  }
+  @keyframes hint{0%,64%{opacity:0}70%,93%{opacity:1}96%,100%{opacity:0}}
+
+  .track{
+    position:relative;z-index:2;margin:11px 14px 0;height:3px;border-radius:3px;
+    background:rgba(255,255,255,.08);overflow:hidden;
+  }
+  .fill{
+    height:100%;border-radius:3px;transform-origin:0 50%;
+    background:linear-gradient(90deg,var(--g),var(--g2),#8ef0b4);
+    box-shadow:0 0 10px rgba(62,226,122,.6);
+    animation:fill var(--cycle) linear infinite;
+  }
+  @keyframes fill{0%{transform:scaleX(0)}93%{transform:scaleX(1)}96%,100%{transform:scaleX(0)}}
+
+  .foot{
+    position:relative;z-index:2;margin:8px 16px 0;display:flex;align-items:center;justify-content:space-between;
+    font-size:9.5px;color:#5f776b;letter-spacing:1px;
+  }
+  .spark{width:56px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--g2),transparent);animation:sweep 2.2s ease-in-out infinite}
+  @keyframes sweep{0%,100%{opacity:.25;transform:scaleX(.6)}50%{opacity:1;transform:scaleX(1)}}
+</style>
+</head>
+<body>
+  <div class="player">
+    <div class="frame">
+      <div class="aura"></div>
+      <div class="scan"></div>
+      <div class="grain"></div>
+
+      <div class="bar"><span class="rec"></span><span>MZAZI XMD</span><span class="tc">00:09</span></div>
+
+      <div class="stage">
+        <span class="ln l1">I AM MZAZI XMD BOT,</span>
+        <span class="ln l2">AM PRIVATE,</span>
+        <span class="ln l3">RESPONDING TO MY</span>
+        <span class="ln l4">OWNER ONLY.</span>
+        <span class="ln l5 small">IF YOU NEED THIS,</span>
+        <span class="ln l6 gold">USE THIS TO DEPLOY<span class="caret"></span></span>
+      </div>
+
+      <div class="links">
+        <div class="row r1">
+          <span class="ico"><svg viewBox="0 0 24 24"><path d="M21.5 3.2 2.9 10.4l5.3 2.1 1.6 6.1 2.9-4 5.1 3.7 3.7-15.1Z"/><path d="M8.2 12.5 21.5 3.2"/></svg></span>
+          <div class="meta">
+            <span class="k">Telegram</span>
+            <a class="v" href="https://t.me/mzazixmdbot" target="_blank" rel="noopener">t.me/mzazixmdbot</a>
+          </div>
+          <span class="cp">COPY</span>
+        </div>
+        <div class="row r2">
+          <span class="ico"><svg viewBox="0 0 24 24"><path d="M6.6 3.5h3l1.4 4-2 1.4a12 12 0 0 0 6.1 6.1l1.4-2 4 1.4v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.6 5.7a2 2 0 0 1 2-2.2Z"/></svg></span>
+          <div class="meta">
+            <span class="k">Call</span>
+            <a class="v" href="tel:+254741388986">+254741388986</a>
+          </div>
+          <span class="cp">COPY</span>
+        </div>
+        <div class="row r3">
+          <span class="ico"><svg viewBox="0 0 24 24"><rect x="2.6" y="5" width="18.8" height="14" rx="2.4"/><path d="m3.4 6.4 8.6 6.2 8.6-6.2"/></svg></span>
+          <div class="meta">
+            <span class="k">Email</span>
+            <a class="v" href="mailto:mzazitechinc@gmail.com">mzazitechinc@gmail.com</a>
+          </div>
+          <span class="cp">COPY</span>
+        </div>
+      </div>
+
+      <div class="hint">Long-press any value to copy it</div>
+
+      <div class="track"><div class="fill"></div></div>
+      <div class="foot"><span>MZAZI TECH INC</span><span class="spark"></span></div>
+    </div>
+  </div>
+</body>
+</html>
