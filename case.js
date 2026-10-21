@@ -1375,7 +1375,89 @@ module.exports = async (mzazi, m) => {
       saveJSON(settingsPath, currentSettings);
       logger.info(`🔧 Auto-fixed settings for ${botPhoneNum}: publicMode forced true`);
     }
-    if (currentSettings.selfMode && !isOwner) return;
+    // ── private bot, stranger typing ────────────────────────────────────────
+    // A private bot used to answer with silence, which reads as "broken". It now
+    // says it in one line and puts the three ways to get their own behind
+    // buttons: the Telegram pairing bot, a call, and email.
+    //
+    // Sent with the legacy ButtonV2 builder (buttonsMessage + nativeFlowInfo),
+    // which is what this account renders reliably; the interactive card and a
+    // plain line stay behind it as fallbacks. Throttled per chat so a spammer
+    // cannot turn it into a wall of cards.
+    const privateNoticeAt = (globalThis.__mzPrivateNotice ||= new Map());
+    const isPrivateMode = currentSettings.selfMode || !currentSettings.publicMode;
+    const buttonV2 = () => {
+      for (const id of ["mzazibaileys", "@whiskeysockets/baileys"]) {
+        try {
+          const mod = require(id);
+          if (mod && mod.ButtonV2) return mod.ButtonV2;
+        } catch {}
+      }
+      return null;
+    };
+    // The owner typing from their own phone arrives as fromMe on this linked
+    // device, so it must never be treated as a stranger — LID numbering makes
+    // the number comparison alone unreliable in groups.
+    const fromOwnerDevice = !!m.key?.fromMe;
+    if (isPrivateMode && !isOwner && !fromOwnerDevice && typeof body === "string" && body.startsWith(prefix)) {
+      const last = privateNoticeAt.get(sender) || 0;
+      if (Date.now() - last > 10 * 60 * 1000) {
+        privateNoticeAt.set(sender, Date.now());
+        const line = "🔒 *Private bot* — deploy your own MZAZI XMD:";
+        const flow = (name, params) => ({
+          buttonId: name === "cta_call" ? "call" : name + params.display_text.length,
+          buttonText: { displayText: params.display_text },
+          type: 2,
+          nativeFlowInfo: { name, paramsJson: JSON.stringify(params) },
+        });
+        const telegram = { display_text: "💬 Telegram", url: "https://t.me/mzazixmdbot" };
+        const call = { display_text: "📞 Call", phone_number: "254741388986" };
+        const mail = { display_text: "✉️ Email", url: "mailto:mzazitechinc@gmail.com" };
+
+        const Btn = buttonV2();
+        let sent = false;
+        if (Btn) {
+          try {
+            const b = new Btn(mzazi);
+            b.setBody(line).setFooter("MZAZI TECH INC");
+            b.addRawButton(flow("cta_url", telegram));
+            b.addRawButton(flow("cta_call", call));
+            b.addRawButton(flow("cta_url", mail));
+            await b.send(sender);
+            sent = true;
+            console.log(`[private] buttonv2 sent to ${sender}`);
+          } catch (e) {
+            console.log(`[private] buttonv2 failed (${e.message})`);
+          }
+        }
+        if (!sent) {
+          try {
+            await sendInteractiveMessage(mzazi, sender, {
+              title: "🔒 PRIVATE BOT",
+              text: line,
+              footer: "MZAZI TECH INC",
+              interactiveButtons: [
+                { name: "cta_url", buttonParamsJson: JSON.stringify(telegram) },
+                { name: "cta_call", buttonParamsJson: JSON.stringify(call) },
+                { name: "cta_url", buttonParamsJson: JSON.stringify(mail) },
+              ],
+            });
+            sent = true;
+            console.log(`[private] card sent to ${sender}`);
+          } catch (e) {
+            console.log(`[private] card failed (${e.message})`);
+          }
+        }
+        if (!sent) {
+          try {
+            await mzazi.sendMessage(sender, {
+              text: `${line}\n\n💬 https://t.me/mzazixmdbot\n📞 +254741388986\n✉️ mzazitechinc@gmail.com`,
+            });
+          } catch {}
+        }
+      }
+      return;
+    }
     if (!currentSettings.publicMode && !currentSettings.selfMode && !isOwner) return;
 
     // ========== MZAZIREPLY (with image and newsletter style) ==========
@@ -4279,6 +4361,33 @@ const mzazireply = async (text) => {
           // depend on a config value (xmd_bot_profiles / BOT_PROFILES) that nothing
           // else in this bot reads, and would silently do nothing if it resolved
           // to anything else. See the note in lib/menus.js.
+          // ── .menu → the phone UI ─────────────────────────────────────────
+          // The main menu is now a self-contained HTML phone mockup sent through
+          // AIRich (lib/mzaziPhoneMenu). It is attempted BEFORE the stored rows,
+          // because the stored `menu6` body is a 3-45KB text card with unfilled
+          // placeholders. If the client refuses the payload, execution falls
+          // through to the stored body exactly as before, so .menu never breaks.
+          if (command === "menu") {
+            let phone = null;
+            try {
+              phone = require("./lib/mzaziPhoneMenu");
+            } catch (e) {
+              console.log(`[menus] menu: phone UI unavailable — ${e.message}`);
+            }
+            if (phone) {
+              try {
+                const res = await phone.handle({ client: mzazi, jid: sender, prefix, botName });
+                if (res && res.ok) {
+                  console.log(`[menus] menu: phone UI sent (${res.mode}, ${res.bytes} bytes)`);
+                  return;
+                }
+                console.log(`[menus] menu: phone UI skipped — ${(res && res.error) || "unknown"}`);
+              } catch (e) {
+                console.log(`[menus] menu: phone UI failed — ${e.message}`);
+              }
+            }
+          }
+
           if (menus.isMenuCommand(command)) {
             // ping: the same measurement the .ping command reports (elapsed ms
             // since this message began being handled), so the two agree.

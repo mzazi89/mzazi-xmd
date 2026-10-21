@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MZAZI XMD — connected</title>
+<style>
+  :root{
+    --ink:#0b0f0d; --muted:#7b8a83; --line:rgba(255,255,255,.08);
+    --green:#22c55e; --green-dk:#0f9d58; --card:#121a16; --card2:#0e1512;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;padding:18px 12px;
+    background:#eef2ef;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    display:flex;justify-content:center;color:#0b0f0d;
+  }
+  .device{
+    width:344px;max-width:100%;
+    background:var(--card);
+    border-radius:38px;
+    padding:9px;
+    box-shadow:0 18px 44px rgba(9,24,17,.28), 0 2px 0 rgba(255,255,255,.6) inset;
+  }
+  .screen{
+    background:linear-gradient(180deg,#0d1411 0%, #0b110e 60%, #0a0f0c 100%);
+    border-radius:31px;overflow:hidden;padding:0 0 14px;
+  }
+  .status{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:11px 18px 4px;color:#e9f5ee;font-size:12px;font-weight:600;letter-spacing:.2px
+  }
+  .status .right{display:flex;gap:5px;align-items:center;opacity:.85}
+  .notch{width:78px;height:19px;border-radius:999px;background:#050807;margin:0 auto 6px}
+  .hero{padding:6px 20px 2px;text-align:center}
+  .ring{
+    width:74px;height:74px;border-radius:50%;margin:8px auto 12px;
+    background:radial-gradient(circle at 50% 45%, rgba(34,197,94,.28), rgba(34,197,94,.06) 62%, transparent 70%);
+    border:1.5px solid rgba(34,197,94,.45);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .ring svg{width:34px;height:34px}
+  .hero h1{
+    margin:0;font-size:17px;letter-spacing:2.6px;font-weight:800;
+    color:#eafff2;text-transform:uppercase
+  }
+  .hero .sub{margin:7px 0 0;font-size:11.5px;color:#9fb3a8;letter-spacing:.4px}
+  .brand{
+    margin:14px 20px 0;padding:9px 12px;border-radius:14px;
+    background:linear-gradient(90deg, rgba(34,197,94,.16), rgba(34,197,94,.04));
+    border:1px solid rgba(34,197,94,.22);
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+  }
+  .brand b{font-size:12.5px;color:#dffbe8;letter-spacing:1.6px}
+  .pill{
+    font-size:10px;font-weight:700;letter-spacing:.6px;color:#052e16;
+    background:var(--green);border-radius:999px;padding:4px 9px;white-space:nowrap
+  }
+  .rows{margin:12px 20px 0;border-radius:16px;background:var(--card2);border:1px solid var(--line);overflow:hidden}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:0}
+  .k{font-size:11px;letter-spacing:.8px;color:var(--muted);text-transform:uppercase;font-weight:700}
+  .v{font-size:12.5px;color:#e8f6ee;font-weight:600;text-align:right;word-break:break-word}
+  .v.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;vertical-align:1px;box-shadow:0 0 0 3px rgba(34,197,94,.16)}
+  .cta{margin:14px 20px 0;display:flex;align-items:center;gap:9px;justify-content:center}
+  .key{
+    font-size:12.5px;font-weight:700;color:#052e16;background:linear-gradient(180deg,#3ee27a,#22c55e);
+    padding:10px 16px;border-radius:12px;box-shadow:0 6px 16px rgba(34,197,94,.28)
+  }
+  .cta small{font-size:11.5px;color:#9fb3a8}
+  .foot{margin:13px 20px 0;font-size:10.5px;color:#63776d;text-align:center;letter-spacing:.3px}
+  .bar{width:104px;height:4px;border-radius:999px;background:#1d2a24;margin:12px auto 0}
+</style>
+</head>
+<body>
+  <div class="device">
+    <div class="screen">
+      <div class="status">
+        <span>{{TIME}}</span>
+        <span class="right">
+          <svg width="15" height="11" viewBox="0 0 15 11" aria-hidden="true"><path fill="#cfe9da" d="M1 8.2 3.4 10.6 8.2 5.8 5.8 3.4 1 8.2Zm6.6-6.6 2.4 2.4L12.6 1.4 10.2-1 7.6 2.2Z"/></svg>
+          <svg width="16" height="11" viewBox="0 0 16 11" aria-hidden="true"><rect x="0" y="1" width="13" height="9" rx="2.4" fill="none" stroke="#cfe9da" stroke-width="1.2"/><rect x="2" y="3" width="8" height="5" rx="1.2" fill="#cfe9da"/><rect x="14" y="4" width="2" height="3" rx="1" fill="#cfe9da"/></svg>
+        </span>
+      </div>
+      <div class="notch"></div>
+
+      <div class="hero">
+        <div class="ring">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5 9.2 17.7 20 6.9" fill="none" stroke="#3ee27a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <h1>Connection Established</h1>
+        <p class="sub">Secure channel active · end-to-end encrypted</p>
+      </div>
+
+      <div class="brand">
+        <b>MZAZI XMD</b>
+        <span class="pill">ONLINE</span>
+      </div>
+
+      <div class="rows">
+        <div class="row"><span class="k">Bot</span><span class="v">{{BOT}}</span></div>
+        <div class="row"><span class="k">Owner</span><span class="v">{{OWNER}}</span></div>
+        <div class="row"><span class="k">Device</span><span class="v mono">{{DEVICE}}</span></div>
+        <div class="row"><span class="k">Engine</span><span class="v">Mzazi Engine {{VERSION}}</span></div>
+        <div class="row"><span class="k">Time</span><span class="v">{{DATE}}</span></div>
+        <div class="row"><span class="k">Status</span><span class="v"><span class="dot"></span>System ready</span></div>
+      </div>
+
+      <div class="cta">
+        <span class="key">{{PREFIX}}menu</span>
+        <small>open the phone menu</small>
+      </div>
+
+      <div class="foot">MZAZI TECH · command core initialised</div>
+      <div class="bar"></div>
+    </div>
+  </div>
+</body>
+</html>

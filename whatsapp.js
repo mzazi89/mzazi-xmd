@@ -402,13 +402,40 @@ Type .menu to initialize command core.
 
 MZAZI XMD • Mzazi Engine v1.0.0
       `;
+      // The connection notice is a phone screen (HTML) first; the text card
+      // below stays as the fallback so a refused payload never means silence.
       try {
-        if (imageBuffer) {
+        let htmlSent = false;
+        try {
+          const connectCard = require("./lib/mzaziPhoneMenu");
+          const card = await connectCard.sendConnect(conn, `${phoneNumber}@s.whatsapp.net`, {
+            botName,
+            owner: config.owner,
+            device: `+${phoneNumber}`,
+            version: "3.0.0",
+            // config.prefix is a RegExp, not a character — the card needs the
+            // character this session actually uses.
+            prefix: (() => {
+              try {
+                const cfg = JSON.parse(require("fs").readFileSync(
+                  `./database/sessions/${phoneNumber}/settings.json`, "utf8"));
+                if (typeof cfg.customPrefix === "string") return cfg.customPrefix || "";
+              } catch {}
+              return ".";
+            })(),
+          });
+          htmlSent = !!(card && card.ok);
+          if (!htmlSent) console.log("[connect] html card skipped —", (card && card.error) || "unknown");
+        } catch (e) {
+          console.log("[connect] html card unavailable —", e.message);
+        }
+
+        if (!htmlSent && imageBuffer) {
           await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
             image: imageBuffer,
             caption: connectionMsg.trim()
           });
-        } else {
+        } else if (!htmlSent) {
           await conn.sendMessage(`${phoneNumber}@s.whatsapp.net`, {
             text: connectionMsg.trim()
           });
