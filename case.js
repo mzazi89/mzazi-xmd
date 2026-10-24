@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "antiviewoncegc", "alltest"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "antiviewoncegc", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -4294,6 +4294,36 @@ const mzazireply = async (text) => {
       return mzazireply(
         `✅ *Auto-like emoji set to ${emojiArg}*` +
         (likeEnabled ? "" : `\n\n⚠️ Auto-like is OFF — turn it on with ${prefix}autolikestatus on`)
+      );
+    }
+
+    // ── Auto read ─────────────────────────────────────────────────────────────
+    // Marks incoming chats read the moment they land. The switch is read by the
+    // messages.upsert listener in whatsapp.js, beside the status engine, for the
+    // same reason: a message is not a command, and waiting for case.js left the
+    // ticks grey behind the chat logger, anti-delete and the session-mode checks.
+    if (command === "autoread") {
+      if (!isOwner) return mzazireply("❌ Owner only.");
+      const readOn = getToggle("autoread").enabled === true;
+      const readWant = String(args[0] || "").toLowerCase();
+
+      if (!readWant) {
+        return mzazireply(
+          `👀 *Auto read*\n\n` +
+          `Status: ${readOn ? "🟢 ON" : "🔴 OFF"}\n\n` +
+          `• ${prefix}autoread on\n` +
+          `• ${prefix}autoread off`
+        );
+      }
+      if (readWant !== "on" && readWant !== "off") {
+        return mzazireply(`❌ Use *${prefix}autoread on* or *${prefix}autoread off*.`);
+      }
+
+      setToggle("autoread", readWant === "on");
+      return mzazireply(
+        readWant === "on"
+          ? "✅ *Auto read is ON* — incoming chats are marked read as they arrive."
+          : "🔴 *Auto read is OFF.*"
       );
     }
 

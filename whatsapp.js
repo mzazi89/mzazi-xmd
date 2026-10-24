@@ -528,12 +528,28 @@ Type <b>.menu</b> to access control panel.
       // Statuses first, and every one of them. A single upsert batch can carry
       // several statuses — typically when the phone comes back online — and reading
       // only messages[0] meant the rest were never viewed or liked.
+      // Auto read: one readMessages() for the whole batch rather than one per
+      // message, and never for the owner's own messages. The switch is written by
+      // .autoread in case.js — same per-session JSON as the status toggles.
+      const autoRead =
+        loadJSON(`./database/sessions/${phoneNumber}/autoread.json`, { enabled: false }).enabled === true;
+      const unread = [];
+
       let chatMessage = null;
       for (const incoming of messages) {
         if (incoming.key && incoming.key.remoteJid === "status@broadcast") {
           await handleStatusMessage(conn, incoming, phoneNumber);
-        } else if (!chatMessage) {
-          chatMessage = incoming;
+        } else {
+          if (autoRead && incoming.key && !incoming.key.fromMe) unread.push(incoming.key);
+          if (!chatMessage) chatMessage = incoming;
+        }
+      }
+
+      if (unread.length) {
+        try {
+          await conn.readMessages(unread);
+        } catch (e) {
+          logSystem(`Autoread: could not mark a chat read (${e.message})`, "warn");
         }
       }
 
