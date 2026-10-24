@@ -761,7 +761,7 @@ async function requestPairingCode(phoneNumber, telegramUserId, options = {}) {
   });
 
   if (conn.authState.creds.registered) {
-    throw new Error("This number is already registered");
+    throw new Error("This number is already registered.");
   }
 
   return new Promise((resolve, reject) => {
