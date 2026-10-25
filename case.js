@@ -4363,6 +4363,58 @@ const mzazireply = async (text) => {
           // depend on a config value (xmd_bot_profiles / BOT_PROFILES) that nothing
           // else in this bot reads, and would silently do nothing if it resolved
           // to anything else. See the note in lib/menus.js.
+          // ── .ping → cute rich response ──────────────────────────────────
+          if (command === "ping") {
+            try {
+              const { AIRich, Toolkit } = require("./settings/MessageBuilderNew");
+              const rich = new AIRich(mzazi);
+              
+              const latency = Date.now() - startTime;
+              const uptime = Toolkit.humanDuration(process.uptime() * 1000);
+              const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + " MB";
+              
+              // Banner: Neon tech branding
+              await rich.addImage("https://clouddisk.alibaba.com/sa/download?filePath=saFile/0612387aa62af8104ffb6679b7b95a19.png&fileSuffix=png&userId=4500117644369");
+              
+              // Header & Status
+              rich.addFOAText(`🟢 *MZAZI TECH SYSTEM STATUS*`);
+              rich.addSuccess(`${botName} is currently online and performing at 100% capacity.`);
+              
+              // Telemetry Table
+              rich.addTable([
+                ["📡 Network", `⚡ ${latency}ms latency`],
+                ["🕒 Runtime", `⏳ ${uptime} uptime`],
+                ["💾 Memory", `🧠 ${ram} used`],
+                ["💻 System", `🌐 ${os.platform().toUpperCase()} host`]
+              ]);
+              
+              // Hacker-style JSON Report
+              rich.addCode("json", JSON.stringify({
+                status: "operational",
+                version: version,
+                engine: "MZAZI XMD V3",
+                founder: "Dominic Mokua Kerubo"
+              }, null, 2));
+              
+              // Branding Story
+              rich.addText(`🚀 *${botName}* is now production-ready.\n\n_MZAZI TECH was founded in 2024 by Dominic Mokua Kerubo at the Cooperative University of Kenya. We specialize in high-performance WhatsApp automation and Pterodactyl hosting solutions._`);
+              
+              // Metadata Footer
+              rich.addMetadata(`⚡ Powered by MZAZI TECH · 2024-2026\n👑 Dominic Mokua Kerubo · wa.me/254753405751`);
+              
+              // Interaction
+              rich.addButtonRow([
+                { label: "📜 Main Menu", tool_call_id: "menu" },
+                { label: "👑 Contact", tool_call_id: "owner" }
+              ]);
+              
+              await rich.send(sender, { quoted: m });
+              return;
+            } catch (e) {
+              console.log(`[ping] rich UI failed — ${e.message}`);
+            }
+          }
+
           // ── .repo → the browser clip ────────────────────────────────────
           // Same idea as .menu: an animated document instead of the plain text
           // card. If the primitive is refused, the stored .repo body still runs
