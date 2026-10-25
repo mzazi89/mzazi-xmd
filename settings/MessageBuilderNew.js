@@ -8,7 +8,7 @@
  * and scalable architecture for modern bot development.
  *
  * Runtime:
- * - Baileys: @whiskeysockets/baileys (latest)
+ * - Baileys: mzazibaileys (latest)
  *
  * Created by Nixel
  * Contributors: ~ Ahmad tumbuh kembang
@@ -35,7 +35,7 @@ const {
     generateWAMessageFromContent,
     prepareWAMessageMedia,
     generateMessageIDV2
-} = require('@whiskeysockets/baileys');
+} = require('mzazibaileys');
 
 const crypto = require('crypto');
 const sharp = require('sharp');

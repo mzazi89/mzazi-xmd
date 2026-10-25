@@ -7,7 +7,7 @@ const chalk = require("chalk");
 const crypto = require("crypto");
 const ffmpeg = require("fluent-ffmpeg");
 const { PassThrough } = require("stream");
-const baileys = require("@whiskeysockets/baileys");
+const baileys = require("mzazibaileys");
 const { sendButtons, sendInteractiveMessage } = require("./lib/interactive");
 const { exec } = require("child_process");
 const fetch = global.fetch || require("node-fetch");
@@ -56,7 +56,7 @@ const {
   PLANS,
 } = require("./lib/whatsappBilling");
 const os = require("os");
-const { downloadMediaMessage, generateWAMessageFromContent, proto, prepareWAMessageMedia } = require("@whiskeysockets/baileys");
+const { downloadMediaMessage, generateWAMessageFromContent, proto, prepareWAMessageMedia } = require("mzazibaileys");
 
 const pino = require("pino");
 const { sendButtonMessage } = require("./lib/buttons");
@@ -764,7 +764,7 @@ module.exports = async (mzazi, m) => {
     // messages where m.message is null — they MUST be handled before the early
     // return below, otherwise they are silently dropped.
     //
-    // Stub type reference (@whiskeysockets/baileys):
+    // Stub type reference (mzazibaileys):
     //   26 = GROUP_PARTICIPANT_INVITE   27 = GROUP_PARTICIPANT_ADD
     //   28 = GROUP_PARTICIPANT_REMOVE   31 = GROUP_PARTICIPANT_PROMOTE
     //   32 = GROUP_PARTICIPANT_DEMOTE   11 = GROUP_CHANGE_SUBJECT

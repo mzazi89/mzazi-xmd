@@ -1,4 +1,4 @@
-const { generateWAMessageFromContent, prepareWAMessageMedia } = require('@whiskeysockets/baileys');
+const { generateWAMessageFromContent, prepareWAMessageMedia } = require('mzazibaileys');
 const crypto = require('crypto');
 
 const VERSION = '4.5';

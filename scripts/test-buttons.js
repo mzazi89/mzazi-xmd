@@ -100,7 +100,7 @@ Module._load = function (request, parent, isMain) {
   if (request === '@prisma/client') return { PrismaClient: function PrismaClient() { return prismaStub; } };
   if (request === 'canvas') return makeCanvasStub();
   if (request === 'gifted-btns') return giftedStub;
-  if (request === '@whiskeysockets/baileys') {
+  if (request === 'mzazibaileys') {
     // buttons.js builds its own protobuf; these two builders are all it touches.
     return {
       proto: { Message: { fromObject: (o) => o } },

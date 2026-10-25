@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // whatsapp.js — Baileys connection layer
-// Fix: @whiskeysockets/baileys is ESM-only; use dynamic import() instead of require()
+// Fix: mzazibaileys is ESM-only; use dynamic import() instead of require()
 // ─────────────────────────────────────────────────────────────────────────────
 const pino = require("pino");
 const fs = require("fs");
@@ -47,7 +47,7 @@ function updateSessionTelemetry(phoneNumber, update) {
 let _baileys = null;
 async function getBaileys() {
   if (!_baileys) {
-    _baileys = await import("@whiskeysockets/baileys");
+    _baileys = await import("mzazibaileys");
   }
   return _baileys;
 }
