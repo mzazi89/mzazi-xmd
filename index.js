@@ -124,9 +124,14 @@ async function startBots() {
   }).filter(bot => bot !== null);
 
   if (bots.length === 0) {
-    console.error("[!] No bots started successfully!");
-    logSystem("No bots started successfully!", 'error');
-    process.exit(1);
+    // WhatsApp-only deployment. The Telegram layer is optional: a Pterodactyl
+    // server started without TELEGRAM_BOT_TOKEN used to exit(1) here, so the
+    // container crash-looped and the WhatsApp sessions it was holding were
+    // never loaded. Warn and continue — the WhatsApp engine starts on its own
+    // (see the loadExistingSessions() call at the bottom of this file).
+    console.warn("[!] No Telegram bot token configured — running WhatsApp-only.");
+    logSystem("No Telegram bot token configured — running WhatsApp-only", 'warn');
+    return;
   }
 
   console.log(`[+] ${bots.length} bots running with shared state`);
