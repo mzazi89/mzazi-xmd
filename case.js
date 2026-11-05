@@ -4538,6 +4538,21 @@ const mzazireply = async (text) => {
       // Nothing matched. If the registry never loaded, say so (in DMs) instead
       // of staying silent — this surfaces sync/key problems immediately.
       const regStatus = getRemoteStatus();
+      if (regStatus.count > 0) {
+        // The registry is loaded, this name simply is not in it. Staying quiet
+        // here is what "the bot is dead" looks like from the other side: the
+        // message is delivered, nothing comes back, and there is no way to tell
+        // a typo from an outage. Say so — but only in a DM, and only when the
+        // message actually looked like a command (prefixed, or a single word in
+        // no-prefix mode), so ordinary chat is never answered.
+        if (!isGroup && (prefix !== "" || !budy.trim().includes(" "))) {
+          console.log(`[dispatch] no such command: "${command}" (registry has ${regStatus.count})`);
+          return mzazireply(
+            `❓ *${prefix}${command}* is not a command.\n\n` +
+            `Type *${prefix}menu* to see what this bot can do.`
+          );
+        }
+      }
       if (regStatus.count === 0) {
         const why = !regStatus.keyConfigured
           ? "DATABASE_URL is not set — the bot cannot import commands from the shared Neon database"
