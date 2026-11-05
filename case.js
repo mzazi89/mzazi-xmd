@@ -4402,17 +4402,43 @@ const mzazireply = async (text) => {
               // Metadata Footer
               rich.addMetadata(`⚡ Powered by MZAZI TECH · 2024-2026\n👑 Dominic Mokua Kerubo · wa.me/254753405751`);
               
-              // Interaction
-              rich.addButtonRow([
-                { label: "📜 Main Menu", tool_call_id: "menu" },
-                { label: "👑 Contact", tool_call_id: "owner" }
-              ]);
+              // Interaction — only if this builder exposes a button row.
+              // AIRich does not, and calling it crashed the send after every
+              // other frame had already been built.
+              if (typeof rich.addButtonRow === "function") {
+                rich.addButtonRow([
+                  { label: "📜 Main Menu", tool_call_id: "menu" },
+                  { label: "👑 Contact", tool_call_id: "owner" }
+                ]);
+              }
               
               await rich.send(sender, { quoted: m });
               return;
             } catch (e) {
+              // The rich card is decoration; a ping that produces no message
+              // at all reads as "the bot is down". Always answer, even if the
+              // builder throws.
               console.log(`[ping] rich UI failed — ${e.message}`);
+              try {
+                // Toolkit is declared inside the try above, so it is not in
+                // scope here — format uptime inline instead.
+                const up = Math.floor(process.uptime());
+                const days = Math.floor(up / 86400);
+                const hours = Math.floor((up % 86400) / 3600);
+                const mins = Math.floor((up % 3600) / 60);
+                const secs = up % 60;
+                const uptimeText = (days ? days + 'd ' : '') + (hours ? hours + 'h ' : '') + (mins ? mins + 'm ' : '') + secs + 's';
+                await mzazireply(
+                  `🟢 *${botName}* is online\n` +
+                  `⚡ ${Date.now() - startTime}ms\n` +
+                  `⏳ ${uptimeText} uptime\n` +
+                  `🧠 ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`
+                );
+              } catch (replyErr) {
+                console.log(`[ping] fallback reply failed — ${replyErr.message}`);
+              }
             }
+            return;
           }
 
           // ── .repo → the browser clip ────────────────────────────────────

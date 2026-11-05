@@ -4039,6 +4039,25 @@ class Quick {
 	}
 }
 
+// ── UI helpers live on the wrong class ───────────────────────────────────────
+// The block above ("UI HELPERS": addSuccess, addWarning, addError, addInfo,
+// addDivider, addBulletList, addQuote, addSectionHeader, addBanner) was pasted
+// inside Button instead of AIRich, so `new AIRich(...).addSuccess(...)` threw
+// "rich.addSuccess is not a function" — every rich card that opened with a
+// status line silently produced no message at all.
+//
+// Copying them onto the AIRich prototype is deliberate over moving the block:
+// the helpers are correct, they simply sit on the wrong prototype, and this
+// keeps the change to one place that cannot corrupt the 4,000-line builder.
+for (const name of [
+  'addSuccess', 'addWarning', 'addError', 'addInfo', 'addDivider',
+  'addBulletList', 'addQuote', 'addSectionHeader', 'addBanner',
+]) {
+  if (typeof AIRich.prototype[name] !== 'function' && typeof Button.prototype[name] === 'function') {
+    AIRich.prototype[name] = Button.prototype[name];
+  }
+}
+
 module.exports = {
 	VERSION,
 	Button,
