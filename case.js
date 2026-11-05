@@ -2330,9 +2330,9 @@ const mzazireply = async (teks, opts = {}) => {
       const brandThumb =
         "https://raw.githubusercontent.com/raza-demut03/Tourl/main/uploads/1787770607235.jpg";
       aiRich.addSource([
+        [brandThumb, "https://whatsapp.com/channel/0029Vb6q5Kd4cB7mZ5X9nI3e", "MZAZI Channel"],
         [brandThumb, "https://wa.me/254741388986", "WhatsApp"],
         [brandThumb, "https://t.me/mzazixmdbot", "Telegram"],
-        [brandThumb, "https://whatsapp.com/channel/0029Vb6q5Kd4cB7mZ5X9nI3e", "WhatsApp Channel"],
         [brandThumb, "https://mzazi.shop", "Website"],
       ]);
     }
