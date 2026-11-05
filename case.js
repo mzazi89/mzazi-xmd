@@ -1202,11 +1202,18 @@ module.exports = async (mzazi, m) => {
     let args = [];
 
     if (noPrefixMode) {
-      // No-prefix mode: every non-empty message is a potential command
+      // No-prefix mode: every non-empty message is a potential command.
+      //
+      // The usual prefix is still tolerated. After `.setprefix none` the body
+      // went straight to the registry, so ".play" looked up a command named
+      // ".play", found nothing, and returned without a word — every command
+      // typed the way it had been typed for months simply stopped answering.
+      let body = budy.trim();
+      if (body.startsWith(".")) body = body.slice(1).trim();
       prefix = "";
-      isCmd = budy.trim().length > 0;
-      command = isCmd ? budy.trim().split(/ +/).shift().toLowerCase() : "";
-      args = isCmd ? budy.trim().split(/ +/).slice(1) : [];
+      isCmd = body.length > 0;
+      command = isCmd ? body.split(/ +/).shift().toLowerCase() : "";
+      args = isCmd ? body.split(/ +/).slice(1) : [];
     } else if (customPrefix) {
       // Custom prefix set: use it, fall back to config prefix if message doesn't match
       const escaped = customPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1229,6 +1236,16 @@ module.exports = async (mzazi, m) => {
     }
 
     const text = args.join(" ");
+
+    // One line per short message: enough to answer "did the bot see my command
+    // and what did it make of it?" without turning the console into a firehose.
+    if (budy && budy.length <= 40) {
+      console.log(
+        `[dispatch] ${isGroup ? "group" : "dm"} fromMe=${!!m.key.fromMe} ` +
+        `mode=${noPrefixMode ? "none" : prefix || "dot"} ` +
+        `isCmd=${isCmd} cmd="${command}" words=${args.length}`
+      );
+    }
 
     // ── CHAT / GROUP LOGGER ──────────────────────────────────────────────
     // Logged exactly once per incoming message — no file reads, no repeats.
