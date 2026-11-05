@@ -2243,19 +2243,93 @@ const mzazireply27 = async (text) => {
     });
 };
 
-const mzazireply = async (text) => {
-    return await mzazi.sendMessage(sender, {
-        text,
-        contextInfo: {
-            forwardingScore: 2,
-            isForwarded: true,
-            forwardedNewsletterMessageInfo: {
-                newsletterJid: "120363430368431358@newsletter",
-                newsletterName: "MZAZI XMD"
-            }
-        }
+// ── ReplyX — branded AIRich reply helper ───────────────────────────────────
+// Drop-in replacement for mzazireply when a command wants the richer card
+// (product block + sources + tip + suggestions). Branded for MZAZI XMD.
+//
+// Usage from any imported command body (already bound in buildCommandContext):
+//     await ReplyX("Your text here")
+// It is also safe to call with empty text — only the product/source/tip
+// sections are sent in that case.
+
+const mzazireply = async (teks, opts = {}) => {
+  const text = String(teks || "").trim();
+
+  try {
+    const { AIRich } = require("./settings/MessageBuilderNew.js");
+    const aiRich = new AIRich(mzazi);
+
+    // ── Product block (the "hero" card at the top) ──
+    aiRich.addProduct({
+      title: "𝐌𝐙𝐀𝐙𝐈 𝐗𝐌𝐃",
+      brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
+      price: "KES 200",
+      sale_price: "KES 300",
+      product_url: "https://wa.me/254741388986?text=Hello+MZAZI+TECH+I+want+to+order",
+      image_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
+      icon_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
     });
+
+    // ── Body text (code fences stripped, same as the original) ──
+    if (text) {
+      const cleanText = text
+        .replace(/^```(?:javascript|js|jsx|node|nodejs|python)?\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+      aiRich.addText(cleanText);
+    }
+
+    // ── Sources (same four slots: WhatsApp / Telegram / Channel / Website) ──
+    const brandThumb =
+      "https://raw.githubusercontent.com/raza-demut03/Tourl/main/uploads/1787770607235.jpg";
+    aiRich.addSource([
+      [brandThumb, "https://wa.me/254741388986", "WhatsApp"],
+      [brandThumb, "https://t.me/mzazixmdbot", "Telegram"],
+      [brandThumb, "https://whatsapp.com/channel/0029Vb6q5Kd4cB7mZ5X9nI3e", "WhatsApp Channel"],
+      [brandThumb, "https://mzazi.shop", "Website"],
+    ]);
+
+    // ── Footer tip ──
+    aiRich.addTip("© 2026 MZAZI TECH");
+
+    // ── Suggestion chips ──
+    aiRich.addSuggest(["MZAZI XMD", "Baileys", "JavaScript"]);
+
+    // ── Send ──
+    // `opts.quoted` lets callers override (e.g. pass the trigger message).
+    // `opts.bypassDownload` and `opts.includesUnifiedResponse` forward through,
+    // matching the other AIRich usages elsewhere in case.js.
+    await aiRich.send(sender, {
+      quoted: opts.quoted ?? m,
+      bypassDownload: opts.bypassDownload ?? false,
+      includesUnifiedResponse: opts.includesUnifiedResponse ?? false,
+    });
+    return;
+  } catch (e) {
+    // The rich card is the presentation, not the message. If the builder or the
+    // send fails, the text still goes out — a branded card must never turn a
+    // working command into silence, which is exactly what happened when the
+    // previous reply helper was the only path.
+    console.log(`[reply] rich card failed, falling back to text: ${e.message}`);
+  }
+
+  try {
+    return await mzazi.sendMessage(sender, {
+      text,
+      contextInfo: {
+        forwardingScore: 2,
+        isForwarded: true,
+        forwardedNewsletterMessageInfo: {
+          newsletterJid: "120363430368431358@newsletter",
+          newsletterName: "MZAZI XMD",
+        },
+      },
+    });
+  } catch (e) {
+    console.log(`[reply] send failed: ${e.message}`);
+  }
 };
+
 
 
     // MZAZIBOT is a stable WhatsApp-side access keyword. It is intentionally
