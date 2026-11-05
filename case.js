@@ -2284,10 +2284,13 @@ const mzazireply27 = async (text) => {
 
 const __cardedMessages = new Map();
 
+// Only an interim line is suppressed. Length is deliberately NOT part of this:
+// a short reply such as "Usage: .play <song>" is a real answer and deserves the
+// full card, which is exactly what a length test took away.
 const __isStatusLine = (text) =>
   !text ||
-  text.length < 45 ||
-  /^(thinking|searching|downloading|uploading|processing|loading|please wait|⏳|🔎|🧠|📥|⚙️)/i.test(text);
+  /^(thinking|searching|downloading|uploading|processing|loading|please wait)\b/i.test(text) ||
+  /^(\u23f3|\u{1F50E}|\u{1F9E0}|\u{1F4E5}|\u2699)/u.test(text);
 
 const mzazireply = async (teks, opts = {}) => {
   const text = String(teks || "").trim();
