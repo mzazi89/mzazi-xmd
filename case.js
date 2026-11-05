@@ -2243,92 +2243,46 @@ const mzazireply27 = async (text) => {
     });
 };
 
-// ── ReplyX — branded AIRich reply helper ───────────────────────────────────
-// Drop-in replacement for mzazireply when a command wants the richer card
-// (product block + sources + tip + suggestions). Branded for MZAZI XMD.
+// mzazireply — branded reply via settings/MessageBuilder.js
 //
-// Usage from any imported command body (already bound in buildCommandContext):
-//     await ReplyX("Your text here")
-// It is also safe to call with empty text — only the product/source/tip
-// sections are sent in that case.
+// The previous versions: (1) forwarded plain text, which rendered but looked
+// like a chain letter; (2) an AIRich card from MessageBuilderNew.js built with
+// addProduct / addSource / addSuggest. Those emit GenAIProductItemCardPrimitive,
+// GenAISearchResultPrimitive and GenAIFollowUpSuggestionPrimitive, which this
+// WhatsApp build does not implement — the chat showed
+// "[UNSUPPORTED_TYPE - GenAIProductItemCardPrimitive]" in place of the card.
+//
+// This version uses settings/MessageBuilder.js (v4.5). Its addText + addTip
+// path builds an ordinary botForwardedMessage with no GenAI primitives, which
+// every client renders. Branding that survives: the forwarded "MZAZI XMD"
+// header and the footer line.
+//
+// Falls back to a plain text send if the builder throws, so a broken builder is
+// never silence.
 
 const mzazireply = async (teks, opts = {}) => {
   const text = String(teks || "").trim();
 
   try {
-    const { AIRich } = require("./settings/MessageBuilderNew.js");
-    const aiRich = new AIRich(mzazi);
+    const { AIRich } = require("./settings/MessageBuilder.js");
+    const rich = new AIRich(mzazi);
 
-    // ── Product block (the "hero" card at the top) ──
-    aiRich.addProduct({
-      title: "𝐌𝐙𝐀𝐙𝐈 𝐗𝐌𝐃",
-      brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
-      price: "KES 200",
-      sale_price: "KES 300",
-      product_url: "https://wa.me/254741388986?text=Hello+MZAZI+TECH+I+want+to+order",
-      image_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
-      icon_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
-    });
+    if (text) rich.addText(text);
+    rich.addTip("(c) 2026 MZAZI TECH");
 
-    // ── Body text (code fences stripped, same as the original) ──
-    if (text) {
-      const cleanText = text
-        .replace(/^```(?:javascript|js|jsx|node|nodejs|python)?\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
-      aiRich.addText(cleanText);
-    }
-
-    // ── Sources (same four slots: WhatsApp / Telegram / Channel / Website) ──
-    const brandThumb =
-      "https://raw.githubusercontent.com/raza-demut03/Tourl/main/uploads/1787770607235.jpg";
-    aiRich.addSource([
-      [brandThumb, "https://wa.me/254741388986", "WhatsApp"],
-      [brandThumb, "https://t.me/mzazixmdbot", "Telegram"],
-      [brandThumb, "https://whatsapp.com/channel/0029Vb6q5Kd4cB7mZ5X9nI3e", "WhatsApp Channel"],
-      [brandThumb, "https://mzazi.shop", "Website"],
-    ]);
-
-    // ── Footer tip ──
-    aiRich.addTip("© 2026 MZAZI TECH");
-
-    // ── Suggestion chips ──
-    aiRich.addSuggest(["MZAZI XMD", "Baileys", "JavaScript"]);
-
-    // ── Send ──
-    // `opts.quoted` lets callers override (e.g. pass the trigger message).
-    // `opts.bypassDownload` and `opts.includesUnifiedResponse` forward through,
-    // matching the other AIRich usages elsewhere in case.js.
-    await aiRich.send(sender, {
-      quoted: opts.quoted ?? m,
-      bypassDownload: opts.bypassDownload ?? false,
-      includesUnifiedResponse: opts.includesUnifiedResponse ?? false,
-    });
+    await rich.send(sender, { forwarded: true });
     return;
   } catch (e) {
-    // The rich card is the presentation, not the message. If the builder or the
-    // send fails, the text still goes out — a branded card must never turn a
-    // working command into silence, which is exactly what happened when the
-    // previous reply helper was the only path.
-    console.log(`[reply] rich card failed, falling back to text: ${e.message}`);
+    console.log(`[reply] builder failed, falling back to text: ${e.message}`);
   }
 
   try {
-    return await mzazi.sendMessage(sender, {
-      text,
-      contextInfo: {
-        forwardingScore: 2,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-          newsletterJid: "120363430368431358@newsletter",
-          newsletterName: "MZAZI XMD",
-        },
-      },
-    });
+    return await mzazi.sendMessage(sender, { text });
   } catch (e) {
     console.log(`[reply] send failed: ${e.message}`);
   }
 };
+
 
 
 
