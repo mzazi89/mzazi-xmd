@@ -2267,24 +2267,51 @@ const mzazireply27 = async (text) => {
 //     await ReplyX("Your text here")
 // It is also safe to call with empty text — only the product/source/tip
 // sections are sent in that case.
+// ── mzazireply — branded AIRich card ────────────────────────────────────────
+//
+// Sends the product block, body text, four sources, footer and suggestion
+// chips through MessageBuilderNew.js.
+//
+// Two refinements over the first version:
+//
+//   • The card is attached to the *answer*, not to every line. A command that
+//     says "🧠 Thinking…" and then posts its result used to send two full
+//     product cards; short status lines (< 45 chars, or starting with a status
+//     verb) now go out as plain text, and only one card is sent per message.
+//   • Errors and refusals ("❌ Groups only.") are short, so they are plain too.
+//
+// mzazireply.plain("…") forces a text-only reply anywhere a card would be noise.
+
+const __cardedMessages = new Map();
+
+const __isStatusLine = (text) =>
+  !text ||
+  text.length < 45 ||
+  /^(thinking|searching|downloading|uploading|processing|loading|please wait|⏳|🔎|🧠|📥|⚙️)/i.test(text);
 
 const mzazireply = async (teks, opts = {}) => {
   const text = String(teks || "").trim();
+
+  const msgId = (m && m.key && m.key.id) || "";
+  const alreadyCarded = msgId ? __cardedMessages.has(msgId) : false;
+  const wantsCard = !opts.plain && !alreadyCarded && !__isStatusLine(text);
 
   try {
     const { AIRich } = require("./settings/MessageBuilderNew.js");
     const aiRich = new AIRich(mzazi);
 
-    // ── Product block (the "hero" card at the top) ──
-    aiRich.addProduct({
-      title: "𝐌𝐙𝐀𝐙𝐈 𝐗𝐌𝐃",
-      brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
-      price: "KES 200",
-      sale_price: "KES 300",
-      product_url: "https://wa.me/254741388986?text=Hello+MZAZI+TECH+I+want+to+order",
-      image_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
-      icon_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
-    });
+    if (wantsCard) {
+      // ── Product block (the "hero" card at the top) ──
+      aiRich.addProduct({
+        title: "𝐌𝐙𝐀𝐙𝐈 𝐗𝐌𝐃",
+        brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
+        price: "KES 300",
+        sale_price: "KES 200",
+        product_url: "https://wa.me/254741388986?text=Hello+MZAZI+TECH+I+want+to+order",
+        image_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
+        icon_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
+      });
+    }
 
     // ── Body text (code fences stripped, same as the original) ──
     if (text) {
@@ -2295,38 +2322,46 @@ const mzazireply = async (teks, opts = {}) => {
       aiRich.addText(cleanText);
     }
 
-    // ── Sources (same four slots: WhatsApp / Telegram / Channel / Website) ──
-    const brandThumb =
-      "https://raw.githubusercontent.com/raza-demut03/Tourl/main/uploads/1787770607235.jpg";
-    aiRich.addSource([
-      [brandThumb, "https://wa.me/254741388986", "WhatsApp"],
-      [brandThumb, "https://t.me/mzazixmdbot", "Telegram"],
-      [brandThumb, "https://whatsapp.com/channel/0029Vb6q5Kd4cB7mZ5X9nI3e", "WhatsApp Channel"],
-      [brandThumb, "https://mzazi.shop", "Website"],
-    ]);
+    if (wantsCard) {
+      // ── Sources (WhatsApp / Telegram / Channel / Website) ──
+      const brandThumb =
+        "https://raw.githubusercontent.com/raza-demut03/Tourl/main/uploads/1787770607235.jpg";
+      aiRich.addSource([
+        [brandThumb, "https://wa.me/254741388986", "WhatsApp"],
+        [brandThumb, "https://t.me/mzazixmdbot", "Telegram"],
+        [brandThumb, "https://whatsapp.com/channel/0029Vb6q5Kd4cB7mZ5X9nI3e", "WhatsApp Channel"],
+        [brandThumb, "https://mzazi.shop", "Website"],
+      ]);
+    }
 
     // ── Footer tip ──
     aiRich.addTip("© 2026 MZAZI TECH");
 
-    // ── Suggestion chips ──
-    aiRich.addSuggest(["MZAZI XMD", "Baileys", "JavaScript"]);
+    if (wantsCard) {
+      // ── Suggestion chips ──
+      aiRich.addSuggest(["MZAZI XMD", "Baileys", "JavaScript"]);
+    }
 
     // ── Send ──
-    // `opts.quoted` lets callers override (e.g. pass the trigger message).
-    // The two flags default to true, matching AIRich.send. Passing false here is
-    // what made the client print UNSUPPORTED_TYPE: without a unified response
-    // it receives the raw GenAI blocks and has nothing to render them with.
+    // includesUnifiedResponse must stay true: with it off the client is handed
+    // the raw GenAI blocks and prints "[UNSUPPORTED_TYPE …]" instead of a card.
     await aiRich.send(sender, {
       quoted: opts.quoted ?? m,
       bypassDownload: opts.bypassDownload ?? true,
       includesUnifiedResponse: opts.includesUnifiedResponse ?? true,
     });
+
+    if (wantsCard && msgId) {
+      __cardedMessages.set(msgId, Date.now());
+      if (__cardedMessages.size > 200) {
+        const cutoff = Date.now() - 10 * 60 * 1000;
+        for (const [id, at] of __cardedMessages) if (at < cutoff) __cardedMessages.delete(id);
+      }
+    }
     return;
   } catch (e) {
-    // The rich card is the presentation, not the message. If the builder or the
-    // send fails, the text still goes out — a branded card must never turn a
-    // working command into silence, which is exactly what happened when the
-    // previous reply helper was the only path.
+    // The card is presentation, the text is the message. A builder failure must
+    // never turn a working command into silence.
     console.log(`[reply] rich card failed, falling back to text: ${e.message}`);
   }
 
@@ -2346,6 +2381,10 @@ const mzazireply = async (teks, opts = {}) => {
     console.log(`[reply] send failed: ${e.message}`);
   }
 };
+
+// Text-only reply, for call sites where a product card would be noise.
+mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true });
+
 
 
 
