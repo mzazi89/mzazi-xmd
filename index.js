@@ -2021,17 +2021,42 @@ startBots()
       // Prisma schema — bot_commands, bot_config, packages, endpoints, providers…
       // wiping the website's data on every bot start. Only non-destructive
       // migrations are allowed here.
-      logSystem('Checking database schema (prisma migrate deploy)...', 'info');
+      //
+      // `migrate deploy` applies `prisma/migrations`, and this repo has none, so
+      // on a database where the bot had never run it created nothing — while the
+      // call itself passed `--skip-generate`, a flag `migrate deploy` does not
+      // accept, so it failed with "unknown or unexpected option" on every boot
+      // and the two warn lines below were the only trace. The tables the bot
+      // needs ("User", "WhatsAppSession", "Subscription", …) were therefore
+      // never created, and every session/subscription write failed at runtime.
+      //
+      // Migrations still run when the folder exists; the additive bootstrap
+      // after it creates whatever is missing, with CREATE … IF NOT EXISTS, so
+      // nothing on the shared database is ever altered or dropped.
+      logSystem('Checking database schema...', 'info');
       const { execSync } = require('child_process');
+      const fs = require('fs');
+      const path = require('path');
+      let hasMigrations = false;
       try {
-        execSync('npx prisma migrate deploy --skip-generate', {
-          stdio: 'inherit',
-          timeout: 60000,
-        });
-        logSystem('Database migration complete', 'success');
-      } catch (migrateErr) {
-        logSystem(`migrate deploy skipped (no migrations): ${String(migrateErr.message).split('\n')[0]}`, 'warn');
-        logSystem('Bot will continue with existing tables. Never run "prisma db push" on this shared database.', 'warn');
+        const dir = path.join(__dirname, 'prisma', 'migrations');
+        hasMigrations = fs.readdirSync(dir, { withFileTypes: true }).some((e) => e.isDirectory());
+      } catch { /* no migrations folder — the bootstrap below does the work */ }
+
+      if (hasMigrations) {
+        try {
+          execSync('npx prisma migrate deploy', { stdio: 'inherit', timeout: 60000 });
+          logSystem('Database migrations applied', 'success');
+        } catch (migrateErr) {
+          logSystem(`migrate deploy failed: ${String(migrateErr.message).split('\n')[0]}`, 'warn');
+        }
+      }
+
+      const { created } = await require('./lib/schemaBootstrap').ensureSchema();
+      if (created.length) {
+        logSystem(`Database schema ready — created ${created.join(', ')}`, 'success');
+      } else {
+        logSystem('Database schema ready', 'success');
       }
     }
   } catch (err) {
