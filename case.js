@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "antiviewoncegc", "antidelete", "alltest"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "autostatus", "autolike", "antiviewoncegc", "antidelete", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -4607,7 +4607,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     // where the state lives: autostatus.json for viewing, autolike.json for
     // reacting, and statusSettings.json for the emoji. Engine commands, like
     // .synccmd — they never enter the website's command registry.
-    if (command === "autoviewstatus") {
+    if (command === "autoviewstatus" || command === "autostatus") {
       if (!isOwner) return mzazireply("❌ Owner only.");
       const viewOn = getToggle("autostatus").enabled === true;
       const viewWant = String(args[0] || "").toLowerCase();
@@ -4632,7 +4632,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
       );
     }
 
-    if (command === "autolikestatus") {
+    if (command === "autolikestatus" || command === "autolike") {
       if (!isOwner) return mzazireply("❌ Owner only.");
       const likeOn = getToggle("autolike").enabled === true;
       const likeWant = String(args[0] || "").toLowerCase();
