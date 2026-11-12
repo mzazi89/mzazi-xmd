@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "antiviewoncegc", "antidelete", "alltest"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "antiviewoncegc", "antidelete", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -564,6 +564,55 @@ const unwrapAntiDeleteMessage = (message) => {
   }
   return current || {};
 };
+
+// ── PRESENCE: "typing…" / "recording audio…" while a chat is active ─────────
+// One timer per session+chat, kept at module scope because case.js is called
+// once per message: a timer created inside the handler would be orphaned on the
+// next message and could never be cleared. WhatsApp expires a presence after
+// ~10s, so the state is re-sent every 7s while messages keep arriving (each one
+// extends the window) and then released — which is what stops an indicator from
+// being left stuck on a chat forever.
+const presenceJobs = new Map();
+const PRESENCE_REFRESH_MS = 7000;
+const PRESENCE_HOLD_MS = 20000;
+const presenceKey = (conn, chatId) =>
+  `${String(conn?.user?.id || "").split("@")[0].split(":")[0]}:${chatId}`;
+
+function presenceStop(conn, chatId) {
+  const key = presenceKey(conn, chatId);
+  const job = presenceJobs.get(key);
+  if (!job) return;
+  clearInterval(job.timer);
+  presenceJobs.delete(key);
+  try {
+    Promise.resolve(conn.sendPresenceUpdate("paused", chatId)).catch(() => {});
+  } catch (e) {}
+}
+
+function presenceStart(conn, chatId, state) {
+  const key = presenceKey(conn, chatId);
+  let job = presenceJobs.get(key);
+  if (!job) {
+    job = { state, until: 0, timer: null };
+    job.timer = setInterval(() => {
+      const live = presenceJobs.get(key);
+      if (!live) return;
+      if (Date.now() > live.until) {
+        presenceStop(conn, chatId);
+        return;
+      }
+      try {
+        Promise.resolve(conn.sendPresenceUpdate(live.state, chatId)).catch(() => {});
+      } catch (e) {}
+    }, PRESENCE_REFRESH_MS);
+    presenceJobs.set(key, job);
+  }
+  job.state = state;
+  job.until = Date.now() + PRESENCE_HOLD_MS;
+  try {
+    Promise.resolve(conn.sendPresenceUpdate(state, chatId)).catch(() => {});
+  } catch (e) {}
+}
 
 setInterval(() => {
   const cutoff = Date.now() - 15 * 60 * 1000;
@@ -1586,15 +1635,39 @@ const mzazireply2 = async (txt, { quoted = null, mentions = [] } = {}) => {
       saveJSON(sessionFile("chatbot.json"), chatbot);
     };
 
-    async function handleAutoTyping() {
-      const cfg = getToggle("autotyping");
-      if (!cfg.enabled || m.key.fromMe || !budy) return;
-      try {
-        await mzazi.sendPresenceUpdate("composing", sender);
-        const delay = Math.min(8000, Math.max(2000, budy.length * 100));
-        await new Promise((r) => setTimeout(r, delay));
-        await mzazi.sendPresenceUpdate("paused", sender);
-      } catch (e) {}
+    // ── Presence + reaction for EVERY incoming message ──────────────────────
+    // Previously `handleAutoTyping` awaited a 2–8s pause in the middle of the
+    // handler, so it both delayed every command reply by that much and gave up
+    // after one pulse. Now it is fire-and-forget and renewed on a timer, and it
+    // fires on ordinary chat as well as on commands. `autorecording` wins over
+    // `autotyping` when both are on, because a chat can only show one state.
+    function handlePresenceAndReactions() {
+      if (m.key.fromMe) return;
+      // Statuses have their own emoji rule (lib/statusEmoji) and no bubble to
+      // hang a reaction on.
+      if (String(sender).endsWith("@broadcast")) return;
+      // A reaction or a revoke is not a message anyone is waiting on an answer
+      // to. Without this, an active group that trades reactions would have the
+      // bot "typing…" and reacting to reactions, forever.
+      if (type === "reactionMessage" || message.protocolMessage) return;
+
+      const state = getToggle("autorecording").enabled
+        ? "recording"
+        : getToggle("autotyping").enabled
+          ? "composing"
+          : "";
+      if (state) presenceStart(mzazi, sender, state);
+      else presenceStop(mzazi, sender);
+
+      const react = getToggle("autoreact");
+      if (react.enabled && !message.protocolMessage) {
+        const emoji = String(react.emoji || "").trim() || "⚡";
+        try {
+          Promise.resolve(
+            mzazi.sendMessage(sender, { react: { text: emoji, key: m.key } })
+          ).catch(() => {});
+        } catch (e) {}
+      }
     }
 
     async function handleAlwaysOnline() {
@@ -1851,7 +1924,7 @@ You:`.trim();
       await mzazireply(response || "Hmm, I am having trouble replying right now.");
     }
 
-    await handleAutoTyping();
+    handlePresenceAndReactions();
     await handleAlwaysOnline();
 
     if (type === "audioMessage" && message.audioMessage?.ptt) {
@@ -4253,6 +4326,72 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         `Text is forwarded with the sender, chat, type and time; images, video, voice notes, stickers and documents are re-sent with them.\n\n` +
         `• ${prefix}antidelete on\n` +
         `• ${prefix}antidelete off`
+      );
+    }
+
+    // ── Presence + reaction switches (engine commands) ─────────────────────────
+    // Read by handlePresenceAndReactions(), which runs on every incoming message.
+    // These shadow same-named rows in bot_commands (profile xmd): those rows did
+    // write the same session files, but `.autorecording` reported `.autotyping`'s
+    // state and nothing anywhere read `autoreact` at all — so the switch flipped
+    // and no code listened. The engine owns all three now; the registry rows are
+    // safe to delete.
+    if (command === "autotyping" || command === "autorecording" || command === "autoreact") {
+      if (!isOwner) return mzazireply("❌ Owner only!");
+      const _want = String(args[0] || "").toLowerCase();
+
+      // `.autoreact on 🔥` — the emoji travels with the switch.
+      if (command === "autoreact" && _want === "on" && args[1]) {
+        const _picked = String(args[1]).trim();
+        saveJSON(sessionFile("autoreact.json"), { enabled: true, emoji: _picked });
+        return mzazireply(`⚡ *AUTO-REACT ON* — every incoming message now gets ${_picked}.`);
+      }
+
+      if (_want !== "on" && _want !== "off") {
+        if (command === "autotyping") {
+          return mzazireply(
+            `⌨️ *AUTO-TYPING:* ${getToggle("autotyping").enabled ? "✅ ON" : "❌ OFF"}\n\n` +
+            `Shows "typing…" in a chat as soon as a message arrives — commands and ordinary chat alike — ` +
+            `and keeps it up while the chat stays active.\n\n` +
+            `Usage: ${prefix}autotyping on|off`
+          );
+        }
+        if (command === "autorecording") {
+          return mzazireply(
+            `🎙️ *AUTO-RECORDING:* ${getToggle("autorecording").enabled ? "✅ ON" : "❌ OFF"}\n\n` +
+            `Shows "recording audio…" instead of "typing…" on every incoming message. ` +
+            `While it is on it takes precedence over auto-typing, since a chat can only show one state.\n\n` +
+            `Usage: ${prefix}autorecording on|off`
+          );
+        }
+        const _ar = getToggle("autoreact");
+        return mzazireply(
+          `⚡ *AUTO-REACT:* ${_ar.enabled ? "✅ ON" : "❌ OFF"} ${_ar.emoji || "⚡"}\n\n` +
+          `Reacts to every incoming message in the chat — not only commands.\n\n` +
+          `Usage: ${prefix}autoreact on|off [emoji]`
+        );
+      }
+
+      if (command === "autoreact") {
+        const _ar = getToggle("autoreact");
+        saveJSON(sessionFile("autoreact.json"), {
+          enabled: _want === "on",
+          ...(_ar.emoji ? { emoji: _ar.emoji } : {}),
+        });
+        return mzazireply(_want === "on"
+          ? `⚡ *AUTO-REACT ON* — every incoming message gets ${_ar.emoji || "⚡"}.`
+          : "⚡ *AUTO-REACT OFF*.");
+      }
+
+      setToggle(command, _want === "on");
+      return mzazireply(
+        command === "autotyping"
+          ? (_want === "on"
+            ? `⌨️ *AUTO-TYPING ON* — "typing…" now shows on every incoming message.`
+            : "⌨️ *AUTO-TYPING OFF*.")
+          : (_want === "on"
+            ? `🎙️ *AUTO-RECORDING ON* — "recording audio…" now shows on every incoming message.`
+            : "🎙️ *AUTO-RECORDING OFF*.")
       );
     }
 
