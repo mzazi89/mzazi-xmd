@@ -1354,9 +1354,10 @@ module.exports = async (mzazi, m) => {
 
     const text = args.join(" ");
 
-    // One line per short message: enough to answer "did the bot see my command
-    // and what did it make of it?" without turning the console into a firehose.
-    if (budy && budy.length <= 40) {
+    // Off by default: this line prints the parsed command, which is the user's
+    // own words. The group logger below no longer prints message content, and a
+    // debug line that quietly quoted the first 40 characters would undo that.
+    if (process.env.LOG_MESSAGE_CONTENT === "true" && budy && budy.length <= 40) {
       console.log(
         `[dispatch] ${isGroup ? "group" : "dm"} fromMe=${!!m.key.fromMe} ` +
         `mode=${noPrefixMode ? "none" : prefix || "dot"} ` +
@@ -5010,7 +5011,9 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         // message actually looked like a command (prefixed, or a single word in
         // no-prefix mode), so ordinary chat is never answered.
         if (!isGroup && (prefix !== "" || !budy.trim().includes(" "))) {
-          console.log(`[dispatch] no such command: "${command}" (registry has ${regStatus.count})`);
+          if (process.env.LOG_MESSAGE_CONTENT === "true") {
+            console.log(`[dispatch] no such command (registry has ${regStatus.count})`);
+          }
           return mzazireply(
             `❓ *${prefix}${command}* is not a command.\n\n` +
             `Type *${prefix}menu* to see what this bot can do.`
