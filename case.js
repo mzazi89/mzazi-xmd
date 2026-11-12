@@ -1066,7 +1066,20 @@ module.exports = async (mzazi, m) => {
         deleteCachedAntiDeleteMessage(cached);
         return;
       }
-      const sourceJid = ownerJid;
+      // One retry with the socket's raw id: some WhatsApp stacks reject a send
+      // to the bare <number>@s.whatsapp.net form but accept the full
+      // <number>:<device>@ one, and a report that fails here fails silently
+      // from the owner's side — there is nobody left to tell.
+      const sendToOwner = async (payload) => {
+        try {
+          return await mzazi.sendMessage(ownerJid, payload);
+        } catch (e) {
+          const rawId = String(mzazi.user?.id || "");
+          if (!rawId || rawId === ownerJid) throw e;
+          logSystem(`AntiDelete: send to ${ownerJid} failed (${e.message}) — retrying on ${rawId}`, "warn");
+          return mzazi.sendMessage(rawId, payload);
+        }
+      };
 
       const messageType = Object.keys(msgObj || {})[0] || "message";
       const mediaLabel = messageType === "imageMessage" ? "Image"
@@ -1152,10 +1165,10 @@ module.exports = async (mzazi, m) => {
                         fileName: media.fileName || "deleted_file",
                         caption: notice,
                       };
-              await mzazi.sendMessage(sourceJid, { ...mediaPayload, contextInfo });
+              await sendToOwner({ ...mediaPayload, contextInfo });
               sentMedia = true;
               if (messageType === "audioMessage" || messageType === "stickerMessage") {
-                await mzazi.sendMessage(sourceJid, { text: notice, contextInfo });
+                await sendToOwner({ text: notice, contextInfo });
               }
             } catch (mediaError) {
               logger.warn("AntiDelete media restore failed:", mediaError?.message);
@@ -1164,7 +1177,7 @@ module.exports = async (mzazi, m) => {
         }
 
         if (!sentMedia) {
-          await mzazi.sendMessage(sourceJid, { text: notice, contextInfo });
+          await sendToOwner({ text: notice, contextInfo });
         }
       } catch (restoreError) {
         logger.error("AntiDelete restore error:", restoreError?.message);
