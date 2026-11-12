@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "autostatus", "autolike", "antiviewoncegc", "antidelete", "update", "updates", "changelog", "alltest"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "autostatus", "autolike", "antiviewoncegc", "antidelete", "update", "updates", "changelog", "commands", "cmds", "allcommands", "catalog", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -4288,6 +4288,31 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         `Last sync: ${status.syncedAt || "never"}` +
         (status.lastError ? `\n⚠️ Last sync error: ${status.lastError}` : "")
       );
+    }
+
+    // ── .commands — every command the bot can run ─────────────────────────────
+    // The curated menus list ~200 of the 1269 registry commands; the rest were
+    // reachable only if you already knew the name. lib/menus.js renders the
+    // catalogue from the LIVE registry, so this cannot drift from what the bot
+    // can actually execute: no argument = index, a category = a page of it,
+    // anything else = a search.
+    if (command === "commands" || command === "cmds" || command === "allcommands" || command === "catalog") {
+      const list = listRemoteCommands(profileId);
+      if (!list.length) {
+        return mzazireply(
+          `📭 The command registry is empty.\n\n` +
+          `Sync with: ${prefix}synccmd` +
+          (getRemoteStatus().lastError ? `\n⚠️ ${getRemoteStatus().lastError}` : "")
+        );
+      }
+      const text = menus.renderCatalog({
+        commands: list,
+        query: String(args[0] || ""),
+        page: Number(args[1]) || 1,
+        prefix,
+      });
+      if (!text) return mzazireply("📭 Nothing to list yet.");
+      return mzazireply(text);
     }
 
     // ── Anti-delete switch (engine command) ────────────────────────────────────
