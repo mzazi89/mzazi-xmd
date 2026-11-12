@@ -34,7 +34,7 @@ const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolik
 const ownMessages = require("./lib/ownMessages");
 const { handleGroupLockEvent } = require("./lib/groupLock.js");
 // The one-emoji rule for status reactions — see lib/statusEmoji.js.
-const { isSingleEmoji, DEFAULT_EMOJI } = require("./lib/statusEmoji");
+const { isSingleEmoji, DEFAULT_EMOJI, DEFAULT_EMOJI_SET, parseEmojiList, resolveEmojiList } = require("./lib/statusEmoji");
 const { getMzaziApiKey, getSetting } = require("./lib/settings");
 // This bot's visual identity — accent, badge, banner ornaments, card palette.
 // Values come from settings.js `theme`; see lib/theme.js.
@@ -4700,16 +4700,19 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
       if (!isOwner) return mzazireply("❌ Owner only.");
       const likeOn = getToggle("autolike").enabled === true;
       const likeWant = String(args[0] || "").toLowerCase();
-      const likeEmoji = loadJSON(sessionFile("statusSettings.json"), { emoji: DEFAULT_EMOJI }).emoji || DEFAULT_EMOJI;
+      const likeSet = resolveEmojiList(loadJSON(sessionFile("statusSettings.json"), {}));
+      const likeEmoji = likeSet.join(" ");
+      const likeEmojiNote = likeSet.length > 1 ? `${likeSet.length} emojis, rotating` : "one emoji";
 
       if (!likeWant) {
         return mzazireply(
           `❤️ *Auto like status*\n\n` +
           `Status: ${likeOn ? "🟢 ON" : "🔴 OFF"}\n` +
-          `Emoji: ${likeEmoji}\n\n` +
+          `Emoji: ${likeEmoji}\n` +
+          `(${likeEmojiNote})\n\n` +
           `• ${prefix}autolikestatus on\n` +
           `• ${prefix}autolikestatus off\n` +
-          `• ${prefix}setautolikeemoji 🔥`
+          `• ${prefix}setautolikeemoji 🔥❤️😍`
         );
       }
       if (likeWant !== "on" && likeWant !== "off") {
@@ -4719,7 +4722,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
       setToggle("autolike", likeWant === "on");
       return mzazireply(
         likeWant === "on"
-          ? `✅ *Auto like status is ON* — reacting with ${likeEmoji}.`
+          ? `✅ *Auto like status is ON* — reacting with ${likeSet.length > 1 ? `a different one each status: ${likeEmoji}` : likeEmoji}.`
           : "🔴 *Auto like status is OFF.*"
       );
     }
@@ -4727,33 +4730,50 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     if (command === "setautolikeemoji") {
       if (!isOwner) return mzazireply("❌ Owner only.");
       const emojiPath = sessionFile("statusSettings.json");
-      const emojiCfg = loadJSON(emojiPath, { emoji: DEFAULT_EMOJI });
+      const emojiCfg = loadJSON(emojiPath, {});
       const emojiArg = args.join(" ").trim();
 
       if (!emojiArg) {
+        const current = resolveEmojiList(emojiCfg);
         return mzazireply(
-          `😀 *Auto-like emoji*\n\nCurrent: ${emojiCfg.emoji || DEFAULT_EMOJI}\n\n` +
-          `Usage: ${prefix}setautolikeemoji 🔥`
+          `😀 *Auto-like emojis*\n\n` +
+          `Current: ${current.join(" ")}\n` +
+          `(${current.length > 1 ? "rotating — a different one on each status" : "single emoji"})\n\n` +
+          `• ${prefix}setautolikeemoji 🔥 — one emoji\n` +
+          `• ${prefix}setautolikeemoji 🔥❤️😍 — rotate through these\n` +
+          `• ${prefix}setautolikeemoji reset — back to the default set`
         );
       }
 
-      // One emoji, nothing else. WhatsApp takes exactly one emoji per reaction and
-      // rejects anything else silently, so an input we cannot use is refused here —
-      // where the person can see why — rather than disappearing later.
-      if (!isSingleEmoji(emojiArg)) {
+      if (/^(reset|default)$/i.test(emojiArg)) {
+        const defaults = DEFAULT_EMOJI_SET.slice();
+        saveJSON(emojiPath, { emoji: defaults[0], emojis: defaults });
         return mzazireply(
-          `❌ That is not a single emoji.\n\n` +
-          `Send one emoji and nothing else — e.g. ${prefix}setautolikeemoji 🔥`
+          `✅ *Auto-like emojis reset* — rotating through ${defaults.join(" ")}`
         );
       }
 
-      // Stored exactly as typed, so a variation selector (❤️) round-trips.
-      emojiCfg.emoji = emojiArg;
-      saveJSON(emojiPath, emojiCfg);
+      // WhatsApp takes exactly one emoji per reaction and rejects anything else
+      // silently, so the input is split into single emojis here and anything that
+      // is not one is dropped — where the person can see why — instead of failing
+      // later with nothing to show for it. A single emoji still means a single
+      // emoji; variety is opt-in by sending more than one.
+      const list = parseEmojiList(emojiArg);
+      if (!list.length) {
+        return mzazireply(
+          `❌ No emoji in that.\n\n` +
+          `Send one or more emojis and nothing else — e.g. ${prefix}setautolikeemoji 🔥❤️😍`
+        );
+      }
+
+      // `emoji` is kept as the first entry so an older build still reads something.
+      saveJSON(emojiPath, { emoji: list[0], emojis: list });
 
       const likeEnabled = getToggle("autolike").enabled === true;
       return mzazireply(
-        `✅ *Auto-like emoji set to ${emojiArg}*` +
+        (list.length > 1
+          ? `✅ *Auto-like emojis set* — rotating through ${list.join(" ")}`
+          : `✅ *Auto-like emoji set to ${list[0]}*`) +
         (likeEnabled ? "" : `\n\n⚠️ Auto-like is OFF — turn it on with ${prefix}autolikestatus on`)
       );
     }

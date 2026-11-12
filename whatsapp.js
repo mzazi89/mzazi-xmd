@@ -250,7 +250,7 @@ function addFollowedChannel(phoneNumber, channelId) {
 //   database/sessions/<number>/autostatus.json      { enabled }
 //   database/sessions/<number>/autolike.json        { enabled }
 //   database/sessions/<number>/statusSettings.json  { emoji }
-const DEFAULT_STATUS_EMOJI = "\u2764\ufe0f";
+const { resolveEmojiList, pickEmoji } = require("./lib/statusEmoji");
 
 async function handleStatusMessage(conn, m, phoneNumber) {
   const statusFile = (name) => `./database/sessions/${phoneNumber}/${name}`;
@@ -271,7 +271,11 @@ async function handleStatusMessage(conn, m, phoneNumber) {
 
   if (!like.enabled) return;
 
-  const emoji = loadJSON(statusFile("statusSettings.json"), { emoji: DEFAULT_STATUS_EMOJI }).emoji || DEFAULT_STATUS_EMOJI;
+  // A set, not one emoji: the same ❤️ under forty statuses in a row is what makes
+  // an account look automated. resolveEmojiList() falls back to the default set,
+  // and pickEmoji() never repeats the previous reaction for this session.
+  const statusSettings = loadJSON(statusFile("statusSettings.json"), {});
+  const emoji = pickEmoji(resolveEmojiList(statusSettings), phoneNumber);
 
   // statusJidList is REQUIRED for anything addressed to status@broadcast, and its
   // absence is why the reaction used to vanish with no error. In messages-send,
