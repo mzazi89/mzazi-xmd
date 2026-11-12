@@ -1510,61 +1510,19 @@ module.exports = async (mzazi, m) => {
       saveJSON(settingsPath, currentSettings);
       logger.info(`🔧 Auto-fixed settings for ${botPhoneNum}: publicMode forced true`);
     }
-    // ── private bot, stranger typing ────────────────────────────────────────
-    // A private bot used to answer with silence, which reads as "broken". It now
-    // sends a short animated HTML card — "I am MZAZI XMD bot, am private, am
-    // responding to my owner only" — with the three ways to deploy your own
-    // underneath. No buttons: the card is a document, so it renders the same on
-    // every client. One card per chat per ten minutes.
-    const privateNoticeAt = (globalThis.__mzPrivateNotice ||= new Map());
+    // ── private / self mode: silence for everyone but the owner ─────────────
+    // This block used to send an "I AM MZAZI XMD BOT, AM PRIVATE, responding to
+    // my owner only" card — plus a plain-text fallback carrying the deploy links
+    // — to anyone who typed a registered command. That is an unprompted advert
+    // sent from the owner's own number, and it gets screenshot and forwarded, so
+    // it is deleted: in self/private mode the bot answers its owner and ignores
+    // every other message without replying at all.
     const isPrivateMode = currentSettings.selfMode || !currentSettings.publicMode;
     // The owner typing from their own phone arrives as fromMe on this linked
     // device, so it must never be treated as a stranger — LID numbering makes
     // the number comparison alone unreliable in groups.
     const fromOwnerDevice = !!m.key?.fromMe;
-    // Only a registered command earns the card. Someone chatting in the group,
-    // or typing ".hello" at a command that does not exist, should get silence
-    // rather than a deployment pitch — that is what "registered" means here:
-    // a row in the command registry, or one of the built-in menus.
-    const isRegisteredCommand = (() => {
-      if (typeof command !== "string" || !command) return false;
-      try { if (getRemoteCommand(command)) return true; } catch {}
-      try { if (menus.isMenuCommand(command)) return true; } catch {}
-      return false;
-    })();
-    if (isPrivateMode && !isOwner && !fromOwnerDevice && isRegisteredCommand) {
-      const last = privateNoticeAt.get(sender) || 0;
-      if (Date.now() - last > 10 * 60 * 1000) {
-        privateNoticeAt.set(sender, Date.now());
-        let sent = false;
-        try {
-          const card = require("./lib/mzaziPhoneMenu");
-          const res = await card.sendPrivate(mzazi, sender, { botName });
-          sent = !!(res && res.ok);
-          console.log(
-            sent
-              ? `[private] card sent to ${sender} (${res.bytes} bytes)`
-              : `[private] card skipped — ${(res && res.error) || "unknown"}`
-          );
-        } catch (e) {
-          console.log(`[private] card unavailable — ${e.message}`);
-        }
-        if (!sent) {
-          try {
-            await mzazi.sendMessage(sender, {
-              text:
-                "🔒 *I AM MZAZI XMD BOT, AM PRIVATE,*\n" +
-                "responding to my owner only.\n\n" +
-                "If you need this, use this to deploy:\n" +
-                "💬 https://t.me/mzazixmdbot\n" +
-                "📞 +254741388986\n" +
-                "✉️ mzazitechinc@gmail.com",
-            });
-          } catch {}
-        }
-      }
-      return;
-    }
+    if (isPrivateMode && !isOwner && !fromOwnerDevice) return;
     if (!currentSettings.publicMode && !currentSettings.selfMode && !isOwner) return;
 
     // ========== MZAZIREPLY (with image and newsletter style) ==========
