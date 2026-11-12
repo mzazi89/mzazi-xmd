@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "autostatus", "autolike", "antiviewoncegc", "antidelete", "alltest"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "autotyping", "autorecording", "autoreact", "autostatus", "autolike", "antiviewoncegc", "antidelete", "update", "updates", "changelog", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -4392,6 +4392,45 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           : (_want === "on"
             ? `🎙️ *AUTO-RECORDING ON* — "recording audio…" now shows on every incoming message.`
             : "🎙️ *AUTO-RECORDING OFF*.")
+      );
+    }
+
+    // ── .update — what changed in this bot ────────────────────────────────────
+    // Data-driven: data/changelog.json, newest first. It is readable by everyone
+    // — a changelog is not internals — but it is capped, because a command that
+    // can print an unbounded list is a command that floods a chat. Editing the
+    // JSON is the whole release process; nothing here needs to change.
+    if (command === "update" || command === "updates" || command === "changelog") {
+      const log = loadJSON("./data/changelog.json", null);
+      const releases = Array.isArray(log?.releases) ? log.releases.filter((r) => r && r.date) : [];
+      const wantAll = ["all", "full", "list"].includes(String(args[0] || "").toLowerCase());
+
+      if (!releases.length) {
+        return mzazireply(
+          `🔄 *WHAT'S NEW*\n\n` +
+          `No updates recorded yet — data/changelog.json is missing or empty.`
+        );
+      }
+
+      const line = "━━━━━━━━━━━━━━━━━━━━";
+      const shown = wantAll ? releases.slice(0, 5) : releases.slice(0, 1);
+      const blocks = shown.map((rel) => {
+        const items = (Array.isArray(rel.items) ? rel.items : [])
+          .slice(0, 12)
+          .map((t) => `✅ ${String(t).trim()}`)
+          .join("\n");
+        return `📅 *${rel.date}*${rel.title ? ` — ${rel.title}` : ""}\n\n${items}`;
+      });
+
+      const more = releases.length > shown.length
+        ? `\n\n_Type ${prefix}${command} all for the full list (${releases.length} releases)._`
+        : "";
+
+      return mzazireply(
+        `🔄 *WHAT'S NEW IN ${String(botName || "MZAZI XMD").toUpperCase()}*\n` +
+        `${line}\n` +
+        blocks.join(`\n\n${line}\n`) +
+        more
       );
     }
 

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "note": "Newest first. Read by the .update command (case.js). Keep items to one line each — they are rendered inside a WhatsApp message.",
+  "releases": [
+    {
+      "date": "2026-11-12",
+      "title": "Anti-delete, presence and status switches",
+      "items": [
+        "Anti-delete: deleted messages and media are now forwarded to the owner's number",
+        "Anti-delete is ON by default — .antidelete off stops it for one chat",
+        "Deleted images, video, voice notes, stickers and documents are recovered (up to 64 MB)",
+        "Auto-typing shows \"typing…\" on every incoming message, not only on commands",
+        "Auto-recording shows \"recording audio…\" instead — .autorecording on",
+        "Auto-react reacts to every incoming message — .autoreact on 🔥 picks the emoji",
+        "Status switches: .autoviewstatus and .autolikestatus now share one implementation",
+        "Every switch answers to both of its names (.autolike = .autolikestatus)"
+      ]
+    }
+  ]
+}
