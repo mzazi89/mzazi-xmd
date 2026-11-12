@@ -23,7 +23,7 @@ const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.p
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
 // and getRemoteCommand() would not recognise them.
-const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "antiviewoncegc", "alltest"];
+const ENGINE_COMMANDS = ["synccmd", "sync", "remote", "autoviewstatus", "autolikestatus", "setautolikeemoji", "autoread", "antiviewoncegc", "antidelete", "alltest"];
 
 // ── Messages THIS bot sent ───────────────────────────────────────────────────
 // Recorded so the bot never reads its own reply back as input. In a self-chat every
@@ -515,6 +515,12 @@ const savePaidData = () => {};
 // participant, and device in the cache key so identical IDs from different
 // chats cannot restore the wrong message.
 const messageCache = new Map();
+// Largest deleted attachment this bot will pull down and re-upload to the
+// owner. The media is decrypted into memory to be forwarded, and the process
+// runs in a shared container — a large video is how the bot OOMs. Anything
+// bigger still produces the text notice, with its type and size, and a warning
+// in the log rather than a dead bot.
+const ANTI_DELETE_MAX_FORWARD_BYTES = 64 * 1024 * 1024;
 const antiDeleteCacheKey = (key = {}, fallbackChatId = "") => [
   key.remoteJid || fallbackChatId || "",
   key.participant || "",
@@ -548,7 +554,11 @@ const unwrapAntiDeleteMessage = (message) => {
     const next = current?.ephemeralMessage?.message ||
       current?.viewOnceMessage?.message ||
       current?.viewOnceMessageV2?.message ||
-      current?.viewOnceMessageV2Extension?.message;
+      current?.viewOnceMessageV2Extension?.message ||
+      // A document sent WITH a caption arrives inside this wrapper. Without
+      // unwrapping it, a deleted PDF/Word file is cached as an unknown type and
+      // never recovered — the caption alone is not enough for the owner.
+      current?.documentWithCaptionMessage?.message;
     if (!next) break;
     current = next;
   }
@@ -1023,9 +1033,12 @@ module.exports = async (mzazi, m) => {
       const isGroup2 = chatId.endsWith("@g.us");
       const groupSettings = loadJSON(`${sessionDir}/groups.json`, {});
       const dmSettings = loadJSON(`${sessionDir}/dm_settings.json`, {});
+      // ON unless a chat has explicitly switched it off with `.antidelete off`.
+      // A freshly paired number therefore starts reporting straight away
+      // instead of needing the switch flipped in every group and DM first.
       const enabled = isGroup2
-        ? !!groupSettings[chatId]?.antidelete
-        : !!dmSettings[chatId]?.antidelete;
+        ? groupSettings[chatId]?.antidelete !== false
+        : dmSettings[chatId]?.antidelete !== false;
 
       if (!enabled) {
         deleteCachedAntiDeleteMessage(cached);
@@ -1033,10 +1046,28 @@ module.exports = async (mzazi, m) => {
       }
 
       const { senderJid, senderNum, msgObj, caption } = cached;
-      // Restore the deleted message directly to the original sender. In a
-      // group, senderJid is the member who sent it; in a DM, it is the chat
-      // participant. Never forward deleted content to the bot owner.
-      const sourceJid = senderJid || chatId;
+
+      // ── Where a deleted message goes: the OWNER ─────────────────────────
+      // "Owner" is the number this session is linked as — `mzazi.user.id` —
+      // and the report is delivered to that number's own chat (WhatsApp's
+      // "message yourself"). That is the only destination that still works
+      // for a deletion in a group the owner is not a member of, and it keeps
+      // one inbox per linked number. `config.whatsappOwner` is only a
+      // fallback for the window before the socket reports its own id.
+      const ownerJid = botPhoneNum
+        ? `${botPhoneNum}@s.whatsapp.net`
+        : String(config.whatsappOwner || "").includes("@")
+          ? String(config.whatsappOwner)
+          : config.whatsappOwner
+            ? `${normalizeJid(config.whatsappOwner)}@s.whatsapp.net`
+            : "";
+      if (!ownerJid) {
+        logSystem("AntiDelete: no owner number resolved — report skipped", "warn");
+        deleteCachedAntiDeleteMessage(cached);
+        return;
+      }
+      const sourceJid = ownerJid;
+
       const messageType = Object.keys(msgObj || {})[0] || "message";
       const mediaLabel = messageType === "imageMessage" ? "Image"
         : messageType === "videoMessage" ? "Video"
@@ -1044,17 +1075,36 @@ module.exports = async (mzazi, m) => {
         : messageType === "stickerMessage" ? "Sticker"
         : messageType === "documentMessage" ? "Document"
         : "Text";
+
+      // Declared size, when WhatsApp supplied one. Used to skip a download
+      // that would not survive the container's memory — see the media block.
+      const declaredSize = Number(msgObj[messageType]?.fileLength || 0) || 0;
+
+      // Group subject so the owner can tell which chat it came from. Bounded:
+      // a metadata lookup must never hold up the report.
+      let chatLabel = chatId;
+      if (isGroup2) {
+        try {
+          const meta = await Promise.race([
+            mzazi.groupMetadata(chatId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 4000)),
+          ]);
+          if (meta?.subject) chatLabel = meta.subject;
+        } catch (e) {}
+      }
+
       const notice =
         `🗑️ *Anti-Delete Alert*\n` +
         `━━━━━━━━━━━━━━━━━━━━\n` +
-        `👤 *From:* @${senderNum || "unknown"}\n` +
-        `${isGroup2 ? `👥 *Chat:* ${chatId}\n` : "💬 *Chat:* Private message\n"}` +
-        `📌 *Type:* ${mediaLabel}\n` +
+        `👤 *Sender:* +${senderNum || "unknown"}\n` +
+        `${isGroup2 ? `👥 *Group:* ${chatLabel}\n` : "💬 *Chat:* Private message\n"}` +
+        `📌 *Type:* ${mediaLabel}${declaredSize ? ` (${formatBytes(declaredSize)})` : ""}\n` +
         (caption ? `📝 *Caption:* ${caption}\n` : "") +
         `⏰ *Deleted:* ${new Date().toLocaleString()}\n` +
         `━━━━━━━━━━━━━━━━━━━━`;
       const contextInfo = {
-        mentionedJid: senderJid ? [senderJid] : [],
+        // No mentions: this lands in the owner's own chat, where an @-tag on
+        // the sender resolves to nothing.
         forwardingScore: 1,
         isForwarded: true,
       };
@@ -1074,6 +1124,11 @@ module.exports = async (mzazi, m) => {
           const hasMediaKey = !!(media?.mediaKey || media?.fileEncSha256);
           if (hasMediaKey) {
             try {
+              if (declaredSize > ANTI_DELETE_MAX_FORWARD_BYTES) {
+                throw new Error(
+                  `too large to forward (${formatBytes(declaredSize)} > ${formatBytes(ANTI_DELETE_MAX_FORWARD_BYTES)})`
+                );
+              }
               const buffer = await downloadMediaMessage(
                 { key: cached.key, message: msgObj },
                 "buffer",
@@ -4146,6 +4201,45 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         `🌐 *Remote Commands* (${list.length})\n\n${lines}\n\n` +
         `Last sync: ${status.syncedAt || "never"}` +
         (status.lastError ? `\n⚠️ Last sync error: ${status.lastError}` : "")
+      );
+    }
+
+    // ── Anti-delete switch (engine command) ────────────────────────────────────
+    // Lives here rather than in the registry because its wording and its default
+    // are part of the behaviour below: monitoring is ON until a chat opts out,
+    // and reports go to the OWNER'S number, not back to the sender. A registry
+    // row of the same name (see bot_commands, profile xmd) is shadowed by this
+    // handler — it is safe to delete that row, this one keeps working.
+    if (command === "antidelete") {
+      if (!isOwner && !isAdmin) return mzazireply("❌ Admins/Owner only!");
+
+      const adWant = String(args[0] || "").toLowerCase();
+      const adCurrent = isGroup
+        ? getGroupSettings(sender).antidelete !== false
+        : loadJSON(sessionFile("dm_settings.json"), {})[sender]?.antidelete !== false;
+
+      if (adWant === "on" || adWant === "off") {
+        const adOn = adWant === "on";
+        if (isGroup) {
+          setGroupSetting(sender, "antidelete", adOn);
+        } else {
+          const _dmFile = sessionFile("dm_settings.json");
+          const _dmAll = loadJSON(_dmFile, {});
+          if (!_dmAll[sender]) _dmAll[sender] = {};
+          _dmAll[sender].antidelete = adOn;
+          saveJSON(_dmFile, _dmAll);
+        }
+        return mzazireply(adOn
+          ? `🗑️ *ANTI-DELETE ON*\n\nDeleted messages and media in this chat are forwarded to the owner's number (+${botPhoneNum}).`
+          : `🗑️ *ANTI-DELETE OFF*\n\nDeletions in this chat are no longer reported.`);
+      }
+
+      return mzazireply(
+        `🗑️ *ANTI-DELETE:* ${adCurrent ? "✅ ON" : "❌ OFF"}\n\n` +
+        `Deleted messages and media from this chat are sent to the owner's number (+${botPhoneNum}).\n` +
+        `Text is forwarded with the sender, chat, type and time; images, video, voice notes, stickers and documents are re-sent with them.\n\n` +
+        `• ${prefix}antidelete on\n` +
+        `• ${prefix}antidelete off`
       );
     }
 
