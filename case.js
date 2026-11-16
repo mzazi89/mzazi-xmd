@@ -18,7 +18,37 @@ const { requestPairingCode } = require("./whatsapp.js");
 const { validatePhoneNumber } = require("./helper/generate.js");
 const logger = require("./helper/logger.js");
 const { logSystem } = require('./helper/logger.js'); // Adjust path as needed
-const { logIncomingMessage, logGroupCommand } = require("./lib/chatLogger");
+const { logIncomingMessage, logGroupCommand, logContentEnabled } = require("./lib/chatLogger");
+
+// ── GROUP METADATA CACHE ────────────────────────────────────────────────────
+// Baileys reads group metadata over the wire. Every group message used to cause
+// two of those fetches — one for the (now silent) logger, one for the admin and
+// LID checks — which is where the lag on commands came from. One fetch is now
+// shared by every caller for a minute, and concurrent callers wait on the same
+// promise instead of racing.
+const GROUP_META_TTL = 60_000;
+
+function groupMetaOf(conn, jid) {
+  const store = conn.__groupMeta || (conn.__groupMeta = new Map());
+  const key = String(jid);
+  const hit = store.get(key);
+  if (hit) {
+    if (hit.pending) return hit.pending;
+    if (Date.now() - hit.at < GROUP_META_TTL) return Promise.resolve(hit.value);
+  }
+  const entry = { at: Date.now(), value: null, pending: null };
+  const t0 = Date.now();
+  entry.pending = Promise.resolve(conn.groupMetadata(key))
+    .then((v) => {
+      entry.value = v; entry.at = Date.now(); entry.pending = null;
+      if (process.env.PERF_LOG === "1") console.log(`[perf] groupMetadata ${key.split("@")[0]} ${Date.now() - t0}ms`);
+      return v;
+    })
+    .catch((e) => { store.delete(key); throw e; });
+  store.set(key, entry);
+  return entry.pending;
+}
+
 const waPanel = require("./lib/waPanel.js"); // WhatsApp panel reseller flow (.panel/.unlimited)
 const { syncRemoteCommands, getRemoteCommand, listRemoteCommands, runRemoteCommand, getRemoteStatus } = require("./lib/remoteCommands.js");
 // Commands the engine handles itself, so they never appear in the imported registry
@@ -1367,11 +1397,14 @@ module.exports = async (mzazi, m) => {
 
     // ── CHAT / GROUP LOGGER ──────────────────────────────────────────────
     // Logged exactly once per incoming message — no file reads, no repeats.
-    {
+    // Skipped outright when content logging is off: the group-name lookup is a
+    // network round-trip, and paying for it to build a line nobody prints was
+    // pure latency on the command path.
+    if (logContentEnabled) {
       let _logGroupName = sender;
       if (isGroup) {
         try {
-          const _meta = await mzazi.groupMetadata(sender);
+          const _meta = await groupMetaOf(mzazi, sender);
           _logGroupName = _meta.subject || sender;
         } catch {}
       }
@@ -1422,7 +1455,7 @@ module.exports = async (mzazi, m) => {
     let lidToPn        = {};
 
     if (isGroup) {
-      const metadata = await mzazi.groupMetadata(sender);
+      const metadata = await groupMetaOf(mzazi, sender);
       participants = metadata.participants || [];
 
       // LID → phone-number map from group metadata. Participants can arrive
