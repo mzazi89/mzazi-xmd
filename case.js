@@ -19,6 +19,7 @@ const { validatePhoneNumber } = require("./helper/generate.js");
 const logger = require("./helper/logger.js");
 const { logSystem } = require('./helper/logger.js'); // Adjust path as needed
 const { logIncomingMessage, logGroupCommand, logContentEnabled } = require("./lib/chatLogger");
+const { pingText } = require("./lib/pingText");
 
 // ── GROUP METADATA CACHE ────────────────────────────────────────────────────
 // Baileys reads group metadata over the wire. Every group message used to cause
@@ -4848,28 +4849,29 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           // else in this bot reads, and would silently do nothing if it resolved
           // to anything else. See the note in lib/menus.js.
           // ── .ping → three lines, no ceremony ─────────────────────────────
-          // It used to build a whole status dashboard: a banner image upload,
-          // a telemetry table, a JSON block, a founder biography and a footer.
+          // It used to build a whole status dashboard: a banner upload, a
+          // telemetry table, a JSON block, a founder biography and a footer.
           // A ping is a liveness check — the smaller it is, the faster it
-          // arrives, and the less it costs every time somebody checks whether
+          // arrives, and the less it costs each time somebody checks whether
           // the bot is awake.
+          //
+          // Three lines, fixed shape, so it never jumps around:
+          //   🏓 pong! + a mood word
+          //   latency + uptime, in monospace so the numbers line up
+          //   who is answering
           if (command === "ping") {
-            try {
-              const ms = Date.now() - startTime;
-              const up = Math.floor(process.uptime());
-              const d = Math.floor(up / 86400);
-              const h = Math.floor((up % 86400) / 3600);
-              const m = Math.floor((up % 3600) / 60);
-              const uptimeText = [d ? `${d}d` : '', h ? `${h}h` : '', `${m}m`].filter(Boolean).join(' ');
-              const mood = ms < 150 ? "⚡" : ms < 500 ? "🙂" : "🐢";
+            const text = pingText({ ms: Date.now() - startTime, uptimeSeconds: process.uptime() });
 
-              await mzazireply(
-                `🏓 *pong!* ${mood}\n` +
-                `└ ⚡ ${ms}ms · ⏳ ${uptimeText}\n` +
-                `_MZAZI TECH · still here_ 👋`
-              );
+            try {
+              await mzazireply(text);
             } catch (e) {
-              console.log(`[ping] reply failed — ${e.message}`);
+              // The helper adds a presence flicker and a quote; if that path is
+              // unhappy, the customer should still get their pong.
+              try {
+                await mzazi.sendMessage(sender, { text }, { quoted: m });
+              } catch (e2) {
+                console.log(`[ping] reply failed — ${e.message} / ${e2.message}`);
+              }
             }
             return;
           }
