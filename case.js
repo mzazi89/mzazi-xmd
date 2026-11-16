@@ -4847,80 +4847,29 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           // depend on a config value (xmd_bot_profiles / BOT_PROFILES) that nothing
           // else in this bot reads, and would silently do nothing if it resolved
           // to anything else. See the note in lib/menus.js.
-          // ── .ping → cute rich response ──────────────────────────────────
+          // ── .ping → three lines, no ceremony ─────────────────────────────
+          // It used to build a whole status dashboard: a banner image upload,
+          // a telemetry table, a JSON block, a founder biography and a footer.
+          // A ping is a liveness check — the smaller it is, the faster it
+          // arrives, and the less it costs every time somebody checks whether
+          // the bot is awake.
           if (command === "ping") {
             try {
-              const { AIRich, Toolkit } = require("./settings/MessageBuilderNew");
-              const rich = new AIRich(mzazi);
-              
-              const latency = Date.now() - startTime;
-              const uptime = Toolkit.humanDuration(process.uptime() * 1000);
-              const ram = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2) + " MB";
-              
-              // Banner: Neon tech branding
-              await rich.addImage("https://clouddisk.alibaba.com/sa/download?filePath=saFile/0612387aa62af8104ffb6679b7b95a19.png&fileSuffix=png&userId=4500117644369");
-              
-              // Header & Status
-              rich.addFOAText(`🟢 *MZAZI TECH SYSTEM STATUS*`);
-              rich.addSuccess(`${botName} is currently online and performing at 100% capacity.`);
-              
-              // Telemetry Table
-              rich.addTable([
-                ["📡 Network", `⚡ ${latency}ms latency`],
-                ["🕒 Runtime", `⏳ ${uptime} uptime`],
-                ["💾 Memory", `🧠 ${ram} used`],
-                ["💻 System", `🌐 ${os.platform().toUpperCase()} host`]
-              ]);
-              
-              // Hacker-style JSON Report
-              rich.addCode("json", JSON.stringify({
-                status: "operational",
-                version: version,
-                engine: "MZAZI XMD V3",
-                founder: "Dominic Mokua Kerubo"
-              }, null, 2));
-              
-              // Branding Story
-              rich.addText(`🚀 *${botName}* is now production-ready.\n\n_MZAZI TECH was founded in 2024 by Dominic Mokua Kerubo at the Cooperative University of Kenya. We specialize in high-performance WhatsApp automation and Pterodactyl hosting solutions._`);
-              
-              // Metadata Footer
-              rich.addMetadata(`⚡ Powered by MZAZI TECH · 2024-2026\n👑 Dominic Mokua Kerubo · wa.me/254753405751`);
-              
-              // Interaction — only if this builder exposes a button row.
-              // AIRich does not, and calling it crashed the send after every
-              // other frame had already been built.
-              if (typeof rich.addButtonRow === "function") {
-                rich.addButtonRow([
-                  { label: "📜 Main Menu", tool_call_id: "menu" },
-                  { label: "👑 Contact", tool_call_id: "owner" }
-                ]);
-              }
-              
-              await rich.send(sender, { quoted: m });
-              return;
+              const ms = Date.now() - startTime;
+              const up = Math.floor(process.uptime());
+              const d = Math.floor(up / 86400);
+              const h = Math.floor((up % 86400) / 3600);
+              const m = Math.floor((up % 3600) / 60);
+              const uptimeText = [d ? `${d}d` : '', h ? `${h}h` : '', `${m}m`].filter(Boolean).join(' ');
+              const mood = ms < 150 ? "⚡" : ms < 500 ? "🙂" : "🐢";
+
+              await mzazireply(
+                `🏓 *pong!* ${mood}\n` +
+                `└ ⚡ ${ms}ms · ⏳ ${uptimeText}\n` +
+                `_MZAZI TECH · still here_ 👋`
+              );
             } catch (e) {
-              // The rich card is decoration; a ping that produces no message
-              // at all reads as "the bot is down". Always answer, even if the
-              // builder throws.
-              console.log(`[ping] rich UI failed — ${e.message}`);
-              try {
-                // Toolkit is declared inside the try above, so it is not in
-                // scope here — format uptime inline instead.
-                const up = Math.floor(process.uptime());
-                const days = Math.floor(up / 86400);
-                const hours = Math.floor((up % 86400) / 3600);
-                const mins = Math.floor((up % 3600) / 60);
-                const secs = up % 60;
-                const uptimeText = (days ? days + 'd ' : '') + (hours ? hours + 'h ' : '') + (mins ? mins + 'm ' : '') + secs + 's';
-                await mzazireply(
-                  `🟢 *${botName}* is online\n` +
-                  `⚡ ${Date.now() - startTime}ms\n` +
-                  `⏳ ${uptimeText} uptime\n` +
-                  `🧠 ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`
-                );
-              } catch (replyErr) {
-                console.log(`[ping] fallback reply failed — ${replyErr.message}`);
-              }
+              console.log(`[ping] reply failed — ${e.message}`);
             }
             return;
           }
