@@ -28,6 +28,17 @@ const { logIncomingMessage, logGroupCommand, logContentEnabled } = require("./li
 // promise instead of racing.
 const GROUP_META_TTL = 60_000;
 
+// Never throws: a group lookup that fails should cost a group name, not the
+// customer's command. Callers get an empty shell they can read participants
+// from without a null check.
+async function safeGroupMeta(conn, jid) {
+  try {
+    return await groupMetaOf(conn, jid);
+  } catch {
+    return { participants: [] };
+  }
+}
+
 function groupMetaOf(conn, jid) {
   const store = conn.__groupMeta || (conn.__groupMeta = new Map());
   const key = String(jid);
@@ -1404,7 +1415,7 @@ module.exports = async (mzazi, m) => {
       let _logGroupName = sender;
       if (isGroup) {
         try {
-          const _meta = await groupMetaOf(mzazi, sender);
+          const _meta = await safeGroupMeta(mzazi, sender);
           _logGroupName = _meta.subject || sender;
         } catch {}
       }
@@ -1455,7 +1466,7 @@ module.exports = async (mzazi, m) => {
     let lidToPn        = {};
 
     if (isGroup) {
-      const metadata = await groupMetaOf(mzazi, sender);
+      const metadata = await safeGroupMeta(mzazi, sender);
       participants = metadata.participants || [];
 
       // LID → phone-number map from group metadata. Participants can arrive
