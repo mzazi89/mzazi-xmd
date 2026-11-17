@@ -27,6 +27,9 @@ chat, what kind of message, and what it said:
   whoever operates the server.
 * `LOG_STYLE` — `card` or `compact` (one line per message).
 * `LOG_TIMEZONE` — card timestamps, default `Africa/Nairobi`.
+* `LOG_WIDTH` — card width in cells, default `44` to fit the phone-sized panel
+  console; every row is measured in grapheme clusters, so emoji, accents and
+  long names cannot push the border out of line.
 * Repeated errors collapse: the first prints with its stack, the rest are counted
   and summarised (`↺ 17× repeated since 17:08:32 — …`) once the burst stops. A
   corrupt Signal session can throw `Bad MAC` for every message from one contact;
