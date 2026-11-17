@@ -20,6 +20,7 @@ const logger = require("./helper/logger.js");
 const { logSystem } = require('./helper/logger.js'); // Adjust path as needed
 const { logIncomingMessage, logGroupCommand, logContentEnabled } = require("./lib/chatLogger");
 const { pingText } = require("./lib/pingText");
+const { fancyName } = require("./lib/fancyName");
 
 // ── GROUP METADATA CACHE ────────────────────────────────────────────────────
 // Baileys reads group metadata over the wire. Every group message used to cause
@@ -1575,8 +1576,8 @@ module.exports = async (mzazi, m) => {
 const mzazireply2 = async (txt, { quoted = null, mentions = [] } = {}) => {
   const ctx = {
     forwardingScore: 999, isForwarded: true,
-    forwardedNewsletterMessageInfo: { newsletterJid: "120363425539800408@newsletter", newsletterName: botName.toUpperCase(), serverMessageId: 143 },
-    externalAdReply: { title: botName.toUpperCase(), body: txt.slice(0, 60), sourceUrl: `https://wa.me/c/${botPhoneNum}`, mediaType: 1, showAdAttribution: true },
+    forwardedNewsletterMessageInfo: { newsletterJid: "120363425539800408@newsletter", newsletterName: fancyName(botName), serverMessageId: 143 },
+    externalAdReply: { title: fancyName(botName), body: txt.slice(0, 60), sourceUrl: `https://wa.me/c/${botPhoneNum}`, mediaType: 1, showAdAttribution: true },
     mentionedJid: mentions,
     ...(quoted ? { stanzaId: quoted.key?.id, participant: quoted.key?.remoteJid, quotedMessage: quoted.message } : {}),
   };
@@ -2480,7 +2481,7 @@ const mzazireply = async (teks, opts = {}) => {
 
     // ── Product block (the "hero" card at the top) ──
       aiRich.addProduct({
-        title: botName.toUpperCase(),
+        title: fancyName(botName),
         brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
         price: "KES 300",
         sale_price: "KES 200",
@@ -2512,7 +2513,7 @@ const mzazireply = async (teks, opts = {}) => {
     }
 
     // ── Footer tip ──
-    aiRich.addTip(`© 2026 ${botName}`);
+    aiRich.addTip(`© 2026 ${fancyName(botName)}`);
 
     if (wantsCard) {
       // ── Suggestion chips ──
