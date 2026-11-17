@@ -15,11 +15,14 @@ Every inbound message prints a card before it is dispatched — who sent it, whi
 chat, what kind of message, and what it said:
 
 ```
-╭─ 💬 TEXT #128 · 20:14:02 ──────────────────────────────────╮
-│ 👤 Mercy Mwende · +254 712 345 678                         │
-│ 📍 VIBING GROUP and CHILLING (42)   ⚡ .menu                │
-│ ❝ hey bot, are you there?                                  │
-╰─ 📱 254741388986 · 12.4/min · owner ───────────────────────╯
+╔═[ 💬 TEXT ] ═ #16 ═ 20:16:27 ═════════════╗
+║ ◆ 𝐌𝚭𝚫𝚭𝚰 𝐓𝚵𝐂𝚮 · owner
+║   +254 741 388 986
+║ ◇ direct message
+╟──────────────────────────────────────────╢
+║ ▎ sign up hapa
+║ ▎ https://mzazi.shop
+╚═ ⣿ 254741388986 · 21.1/min ══════════════╝
 ```
 
 * `LOG_MESSAGE_CONTENT` — `preview` (default, 180 chars), `full`, or `off` for
@@ -28,8 +31,10 @@ chat, what kind of message, and what it said:
 * `LOG_STYLE` — `card` or `compact` (one line per message).
 * `LOG_TIMEZONE` — card timestamps, default `Africa/Nairobi`.
 * `LOG_WIDTH` — card width in cells, default `44` to fit the phone-sized panel
-  console; every row is measured in grapheme clusters, so emoji, accents and
-  long names cannot push the border out of line.
+  console; every row is measured in grapheme clusters (emoji, maths-alphanumeric
+  "fancy fonts", astral glyphs), so a name cannot push the border out of line.
+* The frame is drawn in the product palette — `#2563EB`, `#3B82F6`, `#93C5FD`,
+  sky `#0284C7` — in bold double rules, so the console reads as MZAZI TECH.
 * Repeated errors collapse: the first prints with its stack, the rest are counted
   and summarised (`↺ 17× repeated since 17:08:32 — …`) once the burst stops. A
   corrupt Signal session can throw `Bad MAC` for every message from one contact;
