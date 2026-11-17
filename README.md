@@ -9,6 +9,31 @@ and the Neon database) and nothing else.
 
 ---
 
+## The console
+
+Every inbound message prints a card before it is dispatched — who sent it, which
+chat, what kind of message, and what it said:
+
+```
+╭─ 💬 TEXT #128 · 20:14:02 ──────────────────────────────────╮
+│ 👤 Mercy Mwende · +254 712 345 678                         │
+│ 📍 VIBING GROUP and CHILLING (42)   ⚡ .menu                │
+│ ❝ hey bot, are you there?                                  │
+╰─ 📱 254741388986 · 12.4/min · owner ───────────────────────╯
+```
+
+* `LOG_MESSAGE_CONTENT` — `preview` (default, 180 chars), `full`, or `off` for
+  metadata only. The text belongs to real people and this console is readable by
+  whoever operates the server.
+* `LOG_STYLE` — `card` or `compact` (one line per message).
+* `LOG_TIMEZONE` — card timestamps, default `Africa/Nairobi`.
+* Repeated errors collapse: the first prints with its stack, the rest are counted
+  and summarised (`↺ 17× repeated since 17:08:32 — …`) once the burst stops. A
+  corrupt Signal session can throw `Bad MAC` for every message from one contact;
+  without this it buries the conversation.
+
+---
+
 ## What makes this bot independent
 
 Three things, and each one exists to stop the two bots interfering with each other.

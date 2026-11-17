@@ -1409,25 +1409,35 @@ module.exports = async (mzazi, m) => {
     }
 
     // ── CHAT / GROUP LOGGER ──────────────────────────────────────────────
-    // Logged exactly once per incoming message — no file reads, no repeats.
-    // Skipped outright when content logging is off: the group-name lookup is a
-    // network round-trip, and paying for it to build a line nobody prints was
-    // pure latency on the command path.
-    if (logContentEnabled) {
-      let _logGroupName = sender;
-      if (isGroup) {
-        try {
-          const _meta = await safeGroupMeta(mzazi, sender);
-          _logGroupName = _meta.subject || sender;
-        } catch {}
-      }
+    // Every inbound message, exactly once, before dispatch. The old version was
+    // wrapped in `if (logContentEnabled)` and that flag defaults to off, so the
+    // console showed nothing at all for incoming traffic.
+    //
+    // The group name costs one cached metadata read (safeGroupMeta holds it for a
+    // minute); a failed lookup costs a name, never the message.
+    let _logGroupName = sender;
+    let _logMembers = 0;
+    if (isGroup) {
+      try {
+        const _meta = await safeGroupMeta(mzazi, sender);
+        _logGroupName = _meta.subject || sender;
+        _logMembers = _meta.participants?.length || 0;
+      } catch { /* keep the jid */ }
+    }
+
+    try {
       logIncomingMessage({
         senderName: m.pushName || senderNumber,
         senderNumber,
         isGroup,
         groupName: _logGroupName,
+        memberCount: _logMembers,
         messageType: type,
         text: budy,
+        command: isCmd ? `${prefix}${command}` : null,
+        session: botPhoneNum,
+        isOwner,
+        m,
       });
       if (isGroup && isCmd) {
         logGroupCommand({
@@ -1437,6 +1447,9 @@ module.exports = async (mzazi, m) => {
           command: `${prefix}${command}`,
         });
       }
+    } catch (logErr) {
+      // A logger must never take the bot down with it.
+      logSystem(`logger: ${logErr.message}`, "warn");
     }
 
     const senderPureNumber = jidToNumber(msgSender);

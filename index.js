@@ -1,4 +1,7 @@
 require('dotenv').config();
+// Loaded first, before any other module can log: collapses repeated errors (the
+// Bad MAC storm) into a first occurrence plus a count.
+require('./lib/logGuard');
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const path = require('path');
