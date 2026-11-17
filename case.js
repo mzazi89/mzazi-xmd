@@ -2439,6 +2439,9 @@ const __isStatusLine = (text) =>
 
 const mzazireply = async (teks, opts = {}) => {
   const text = String(teks || "").trim();
+  // The name .setbotname wrote for this number — botSettings.json is per
+  // session, so two bots on one server answer under their own names.
+  const botName = getBotName(botPhoneNum) || config.botName || "MZAZI XMD";
 
   const msgId = (m && m.key && m.key.id) || "";
   const alreadyCarded = msgId ? __cardedMessages.has(msgId) : false;
@@ -2451,7 +2454,7 @@ const mzazireply = async (teks, opts = {}) => {
     if (wantsCard) {
       // ── Product block (the "hero" card at the top) ──
       aiRich.addProduct({
-        title: "𝐌𝐙𝐀𝐙𝐈 𝐗𝐌𝐃",
+        title: botName.toUpperCase(),
         brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
         price: "KES 300",
         sale_price: "KES 200",
@@ -4848,6 +4851,31 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           // depend on a config value (xmd_bot_profiles / BOT_PROFILES) that nothing
           // else in this bot reads, and would silently do nothing if it resolved
           // to anything else. See the note in lib/menus.js.
+          // ── .setbotname → rename this bot ──────────────────────────────
+          // Writes to database/sessions/<number>/botSettings.json, which is what
+          // getBotName() reads for the reply card, the image footers and the
+          // newsletter attribution. Owner-only: the name is the bot's identity,
+          // not a per-chat preference.
+          if (command === "setbotname" || command === "botname") {
+            if (!isOwner) return;
+            const wanted = String(body || "")
+              .replace(/^[.!/#]?\s*(setbotname|botname)\s*/i, "")
+              .replace(/\s+/g, " ")
+              .replace(/[^\p{L}\p{N} ._'-]/gu, "")
+              .trim()
+              .slice(0, 28);
+
+            if (!wanted) {
+              await mzazireply(`✏️ *Usage*\n.setbotname Mzazi XMD\n\n_1–28 characters. This is the name on every reply._`);
+              return;
+            }
+
+            setBotName(botPhoneNum, wanted);
+            config.botName = wanted; // image footers read the module config
+            await mzazireply(`✅ *Bot name set*\n\nNow answering as *${wanted}*.`);
+            return;
+          }
+
           // ── .ping → three lines, no ceremony ─────────────────────────────
           // It used to build a whole status dashboard: a banner upload, a
           // telemetry table, a JSON block, a founder biography and a footer.
