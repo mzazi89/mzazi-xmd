@@ -2641,7 +2641,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         await sendInteractiveMessage(mzazi, sender, {
           title: "💳 MZAZI XMD PLANS",
           text: whoLine + plansText,
-          footer: "⚡ Powered by MZAZI TECH INC",
+          footer: `⚡ Powered by ${fancyName(botName)}`,
           interactiveButtons: [
             {
               name: "single_select",
@@ -2708,6 +2708,23 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         const bCustomPic = `./database/sessions/${botPhoneNum}/menu.jpg`;
         const bDefaultPic = "./media/menu.jpg";
         const bPicPath = fs.existsSync(bCustomPic) ? bCustomPic : bDefaultPic;
+
+        // Banner art: a file if somebody has dropped one on the server, else the
+        // bot's own profile photo — the same picture the reply card uses, so the
+        // menu and the replies look like one product.
+        let bImage = null;
+        if (fs.existsSync(bPicPath)) {
+          try { bImage = { buffer: fs.readFileSync(bPicPath) }; } catch {}
+        }
+        if (!bImage) {
+          try {
+            const dpUrl = await cardImageFor(mzazi, botPhoneNum);
+            if (typeof fetch === "function" && /^https?:/i.test(dpUrl)) {
+              const r = await fetch(dpUrl);
+              if (r.ok) bImage = { buffer: Buffer.from(await r.arrayBuffer()) };
+            }
+          } catch {}
+        }
         const bUpSec = Math.floor((Date.now() - startTime) / 1000);
         const bUpStr = Math.floor(bUpSec / 86400) + 'd ' + Math.floor((bUpSec % 86400) / 3600) + 'h ' + Math.floor((bUpSec % 3600) / 60) + 'm ' + (bUpSec % 60) + 's';
         const bNow = new Date();
@@ -2719,7 +2736,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
 
         const bannerTxt = theme.restyle(
             "╔═════════════╗\n" +
-            "║➥✦ MZAZI XMD ✦\n" +
+            "║➥✦ " + fancyName(botName) + " ✦\n" +
             "╠═════════════╣\n" +
             "║➥┌──────────┐\n" +
             "║➥│ 👤 USER    : " + bPushName + "\n" +
@@ -2735,10 +2752,10 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
             "╚═════════════╝");
 
         await sendInteractiveMessage(mzazi, sender, {
-            title: "MZAZI TECH INC",
+            title: fancyName(botName),
             text: bannerTxt + '\n\n' + `👋 Welcome to ${theme.name}\n\nSelect a category from the menu below:`,
-            footer: "⚡ Powered by MZAZI TECH INC",
-            ...(fs.existsSync(bPicPath) ? { image: { buffer: fs.readFileSync(bPicPath) } } : {}),
+            footer: `⚡ Powered by ${fancyName(botName)}`,
+            ...(bImage ? { image: bImage } : {}),
             interactiveButtons: [
                 {
                     name: "single_select",
@@ -2932,7 +2949,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
             `⏳ Validity: *${plan.days} days*\n` +
             `🔖 Reference: \`${result.reference}\`\n\n` +
             `👇 Tap *PAY NOW* to complete your payment, then tap *Verify Payment*.`,
-          footer: "⚡ Powered by MZAZI TECH INC",
+          footer: `⚡ Powered by ${fancyName(botName)}`,
           interactiveButtons: [
             {
               name: "cta_url",
@@ -4971,7 +4988,10 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
             }
             if (phone) {
               try {
-                const res = await phone.handle({ client: mzazi, jid: sender, prefix, botName });
+                // The same glyph styling as the reply card: the menu is the
+                // first thing a new customer sees, so it should not be the one
+                // place where the brand suddenly looks plain.
+                const res = await phone.handle({ client: mzazi, jid: sender, prefix, botName: fancyName(botName) });
                 if (res && res.ok) {
                   console.log(`[menus] menu: phone UI sent (${res.mode}, ${res.bytes} bytes)`);
                   return;
@@ -4987,7 +5007,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
             // ping: the same measurement the .ping command reports (elapsed ms
             // since this message began being handled), so the two agree.
             const menuText = menus.renderMenu(command, {
-              botName,
+              botName: fancyName(botName),
               prefix,
               ping: Date.now() - startTime,
             });
