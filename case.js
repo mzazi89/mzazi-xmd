@@ -2412,6 +2412,30 @@ const mzazireply27 = async (text) => {
 //     await ReplyX("Your text here")
 // It is also safe to call with empty text — only the product/source/tip
 // sections are sent in that case.
+// ─── Card art ───────────────────────────────────────────────────────────────
+// The picture on the reply card belongs to the bot, not to the template: the
+// owner's WhatsApp profile photo, resolved once and cached for half an hour so a
+// busy group does not refetch it on every command. Falls back to the shipped
+// image when privacy settings hide the photo.
+const FALLBACK_CARD_IMAGE = "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg";
+const CARD_IMAGE_TTL = 30 * 60 * 1000;
+const __cardImages = new Map();
+
+async function cardImageFor(conn, number) {
+  const key = String(number || "").replace(/\D/g, "");
+  if (!key) return FALLBACK_CARD_IMAGE;
+  const hit = __cardImages.get(key);
+  if (hit && Date.now() - hit.at < CARD_IMAGE_TTL) return hit.url;
+
+  let url = null;
+  try {
+    url = await conn.profilePictureUrl(`${key}@s.whatsapp.net`, "image");
+  } catch {}
+  const resolved = url || FALLBACK_CARD_IMAGE;
+  __cardImages.set(key, { url: resolved, at: Date.now() });
+  return resolved;
+}
+
 // ── mzazireply — branded AIRich card ────────────────────────────────────────
 //
 // Sends the product block, body text, four sources, footer and suggestion
@@ -2452,15 +2476,17 @@ const mzazireply = async (teks, opts = {}) => {
     const aiRich = new AIRich(mzazi);
 
     if (wantsCard) {
-      // ── Product block (the "hero" card at the top) ──
+      const cardImage = await cardImageFor(mzazi, botPhoneNum);
+
+    // ── Product block (the "hero" card at the top) ──
       aiRich.addProduct({
         title: botName.toUpperCase(),
         brand: "꙳͙͡༑ᐧ̤⌜𝐌͢𝐙ͮ𝐀𝐙𝐈 𝐓͢𝐄ͮ𝐂𝐇⌟꙳͙͡༑ᐧ",
         price: "KES 300",
         sale_price: "KES 200",
         product_url: "https://wa.me/254741388986?text=Hello+MZAZI+TECH+I+want+to+order",
-        image_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
-        icon_url: "https://x.xcute.workers.dev/f/images/5f24dcab3727.jpg",
+        image_url: cardImage,
+        icon_url: cardImage,
       });
     }
 
@@ -2486,11 +2512,11 @@ const mzazireply = async (teks, opts = {}) => {
     }
 
     // ── Footer tip ──
-    aiRich.addTip("© 2026 MZAZI TECH");
+    aiRich.addTip(`© 2026 ${botName}`);
 
     if (wantsCard) {
       // ── Suggestion chips ──
-      aiRich.addSuggest(["MZAZI XMD", "Baileys", "JavaScript"]);
+      aiRich.addSuggest([botName, "WhatsApp", "Website"]);
     }
 
     // ── Send ──
@@ -2524,7 +2550,7 @@ const mzazireply = async (teks, opts = {}) => {
         isForwarded: true,
         forwardedNewsletterMessageInfo: {
           newsletterJid: "120363430368431358@newsletter",
-          newsletterName: "MZAZI XMD",
+          newsletterName: botName,
         },
       },
     });
