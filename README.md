@@ -9,6 +9,17 @@ and the Neon database) and nothing else.
 
 ---
 
+## Prefix-required commands
+
+A session can be switched to "no prefix" (`.setprefix none`), where every message
+is a candidate command. Mass-mention commands are exempt: `tagall`, `tagall2`,
+`hidetagall`, `mention`, `callall` and `tagnotadmin` always need the prefix, so a
+line of ordinary conversation containing the word cannot ping the whole group.
+
+An admin who types one bare is told the prefixed form; everyone else is ignored,
+since replying to every stray "tagall" would be its own kind of noise. Override the
+list with `PREFIX_ONLY_COMMANDS="tagall,mention,…"`.
+
 ## The console
 
 Every inbound message prints a card before it is dispatched — who sent it, which

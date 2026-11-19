@@ -28,6 +28,22 @@ const { fancyName } = require("./lib/fancyName");
 // LID checks — which is where the lag on commands came from. One fetch is now
 // shared by every caller for a minute, and concurrent callers wait on the same
 // promise instead of racing.
+// ── COMMANDS THAT MUST BE TYPED WITH A PREFIX ───────────────────────────────
+// A session can run in "no prefix" mode, where every message is treated as a
+// command. That is fine for `menu` or `ping`; it is not fine for the commands that
+// mention the entire group, because a line of ordinary conversation containing one
+// of these words pinged two hundred people. These names always need the prefix,
+// whatever the session is set to.
+//
+// Override with PREFIX_ONLY_COMMANDS="tagall,mention,…" (comma separated).
+const PREFIX_ONLY_COMMANDS = new Set(
+  String(process.env.PREFIX_ONLY_COMMANDS
+    || "tagall,tagall2,hidetagall,mention,callall,tagnotadmin")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean),
+);
+
 const GROUP_META_TTL = 60_000;
 
 // Never throws: a group lookup that fails should cost a group name, not the
@@ -1360,6 +1376,7 @@ module.exports = async (mzazi, m) => {
     let isCmd = false;
     let command = "";
     let args = [];
+    let usedPrefix = false;
 
     if (noPrefixMode) {
       // No-prefix mode: every non-empty message is a potential command.
@@ -1369,6 +1386,9 @@ module.exports = async (mzazi, m) => {
       // ".play", found nothing, and returned without a word — every command
       // typed the way it had been typed for months simply stopped answering.
       let body = budy.trim();
+      // A leading dot is still honoured here, and it is the only thing that counts
+      // as "used the prefix" in this mode.
+      usedPrefix = body.startsWith(".");
       if (body.startsWith(".")) body = body.slice(1).trim();
       prefix = "";
       isCmd = body.length > 0;
@@ -1385,12 +1405,14 @@ module.exports = async (mzazi, m) => {
         prefix = ".";
       }
       isCmd = budy.length > 0 && budy.startsWith(prefix);
+      usedPrefix = isCmd;
       command = isCmd ? budy.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : "";
       args = isCmd ? budy.slice(prefix.length).trim().split(/ +/).slice(1) : [];
     } else {
       // Default: use config.prefix regex or "." fallback
       prefix = config.prefix?.test?.(budy) ? budy.match(config.prefix)[0] : ".";
       isCmd = budy.length > 0 && budy.startsWith(prefix);
+      usedPrefix = isCmd;
       command = isCmd ? budy.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : "";
       args = isCmd ? budy.slice(prefix.length).trim().split(/ +/).slice(1) : [];
     }
@@ -2595,6 +2617,18 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     }
 
     if (!isCmd) return;
+
+    // A mass-mention command without the prefix is conversation, not a request.
+    // The guard lives here, not next to the parser, because it needs the group
+    // admin flags: an admin gets told how to run it, everybody else is ignored
+    // (replying to every stray "tagall" would be its own kind of noise).
+    if (!usedPrefix && PREFIX_ONLY_COMMANDS.has(command)) {
+      console.log(`[dispatch] "${command}" ignored — prefix required`);
+      if (isGroup && (isOwner || isAdmin)) {
+        await mzazireply(`That command needs the prefix — try ${prefix || "."}${command}`);
+      }
+      return;
+    }
 
     // ========== REACT TO COMMAND ==========
     
