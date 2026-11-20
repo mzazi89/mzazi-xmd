@@ -1429,10 +1429,42 @@ module.exports = async (mzazi, m) => {
             fromMe: !!m.key.fromMe,
           }) + "\n"
         );
-      } catch (e) {}
-    }
+       } catch (e) {}
+     }
+     // ── "I typed a command and nothing happened" ─────────────────────────────
+     // The parse above accepts exactly ONE prefix, so a message that opens with
+     // any other punctuation character (! ? @ /) is not a command and is dropped
+     // in silence. From the other side that is indistinguishable from an outage —
+     // and it is what a person who is used to !ping from another bot will report.
+     // Record those, with the prefix that was actually in force and the first
+     // characters of the text, so the next silence can be explained from the log
+     // instead of guessed at. Mentions (@…) are included: they are the loudest
+     // false positive in a group, and seeing them logged is the proof that they
+     // are being ignored on purpose rather than crashing something.
+     if (!isCmd && budy) {
+       const head = String(budy).trim();
+       if (head && /^[.!?@/]/.test(head)) {
+         try {
+           const dbg = "./database/dispatch.log";
+           if (fs.existsSync(dbg) && fs.statSync(dbg).size > 300000) fs.writeFileSync(dbg, "");
+           fs.appendFileSync(
+             dbg,
+             JSON.stringify({
+               at: new Date().toISOString(),
+               stage: "noparse",
+               bot: botPhoneNum,
+               prefix,
+               chat: sender,
+               from: senderNum,
+               fromMe: !!m.key.fromMe,
+               head: head.slice(0, 40),
+             }) + "\n"
+           );
+         } catch (e) {}
+       }
+     }
 
-    // Off by default: this line prints the parsed command, which is the user's
+     // Off by default: this line prints the parsed command, which is the user's
     // own words. The group logger below no longer prints message content, and a
     // debug line that quietly quoted the first 40 characters would undo that.
     if (process.env.LOG_MESSAGE_CONTENT === "true" && budy && budy.length <= 40) {
@@ -1567,17 +1599,28 @@ module.exports = async (mzazi, m) => {
     // that form is refused, while the phone-number form is accepted. Every
     // reply helper resolves through here so a command is never answered into a
     // void.
+    // A phone jid may carry the sending DEVICE as a suffix — `254741388986:33`
+    // in the bot's own `user.id`, for example. That form is how a device
+    // addresses itself, not how a chat is addressed, and handing it to
+    // sendMessage is how a reply can be accepted by the library and never show
+    // up in the chat. Everything sent from here is addressed to a bare jid.
+    const bareId = (jid) => {
+      const s = String(jid || "");
+      if (!s.endsWith("@s.whatsapp.net")) return s;
+      const [user, server] = s.split("@");
+      return `${user.split(":")[0]}@${server}`;
+    };
     const outboundJid = async (jid) => {
       const raw = String(jid || "");
-      if (!(raw.endsWith("@lid") || raw.endsWith("@hosted_lid"))) return jid;
+      if (!(raw.endsWith("@lid") || raw.endsWith("@hosted_lid"))) return bareId(jid);
       if (botLid && normalizeJid(raw) === normalizeJid(botLid) && mzazi.user?.id) {
-        return mzazi.user.id;
+        return bareId(mzazi.user.id);
       }
       if (!isGroup && m.key?.remoteJidAlt && String(m.key.remoteJidAlt).endsWith("@s.whatsapp.net")) {
-        return m.key.remoteJidAlt;
+        return bareId(m.key.remoteJidAlt);
       }
       const resolved = await resolveJid(raw);
-      return resolved && String(resolved).endsWith("@s.whatsapp.net") ? resolved : jid;
+      return resolved && String(resolved).endsWith("@s.whatsapp.net") ? bareId(resolved) : jid;
     };
 
     // ─── The sender's REAL phone number ──────────────────────────────────────

@@ -583,6 +583,10 @@ Type <b>.menu</b> to access control panel.
                 alt: m?.key?.remoteJidAlt || m?.key?.participantAlt || null,
                 type: m?.message ? Object.keys(m.message)[0] : m?.messageStubType || "none",
                 cmdLike: /^[.!?@]/.test(_text),
+                // The words themselves, capped. Without this the log can say
+                // that something arrived but never what it was, which is how
+                // "it is not responding" stayed unanswerable for so long.
+                head: _text.slice(0, 40),
               }) + "\n"
             );
           } catch (e) {}
