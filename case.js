@@ -4906,6 +4906,121 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
       );
     }
 
+    // ── .vv / .vv2 — reveal a view-once ───────────────────────────────────────
+    // Both registry commands downloaded straight from the QUOTE, and a quoted
+    // view-once is only a stub: WhatsApp strips url and directPath from it,
+    // which is exactly the "No valid media URL or directPath present in message"
+    // failure. The original stanza — url and mediaKey intact — is still in
+    // messageCache, so this reads from there first and treats the quote as a
+    // fallback. If neither carries a download path, the phone is asked to
+    // re-upload the media and the download is retried once.
+    if (command === "vv" || command === "vv2") {
+      const toOwner = command === "vv2";
+      if (toOwner && !isOwner) return; // silent, as before
+      const dest = toOwner ? `${ownerNumbers[0]}@s.whatsapp.net` : sender;
+      const say = async (txt) => {
+        try { await mzazi.sendMessage(dest, { text: txt }); } catch {}
+      };
+
+      try {
+        const qCtx =
+          m.message?.extendedTextMessage?.contextInfo ||
+          m.message?.imageMessage?.contextInfo ||
+          m.message?.videoMessage?.contextInfo ||
+          m.message?.audioMessage?.contextInfo ||
+          m.message?.documentMessage?.contextInfo ||
+          {};
+        const stanzaId = qCtx.stanzaId || null;
+        const quoted = qCtx.quotedMessage || null;
+
+        if (!quoted && !stanzaId) {
+          await say("❌ Reply to a *view-once* image, video or voice note.");
+          return;
+        }
+
+        const cached = stanzaId
+          ? findCachedAntiDeleteMessage({
+              id: stanzaId,
+              remoteJid: sender,
+              participant: qCtx.participant || m.key?.participant,
+            })
+          : null;
+
+        const MEDIA_TYPES = ["imageMessage", "videoMessage", "audioMessage", "documentMessage"];
+        let type = "";
+        let media = null;
+        for (const candidate of [cached?.msgObj, quoted]) {
+          if (!candidate) continue;
+          const inner = unwrapMessage(candidate);
+          const found = MEDIA_TYPES.find((k) => inner?.[k]);
+          if (found) { type = found; media = inner[found]; break; }
+        }
+
+        if (!media) {
+          await say("❌ That quote carries no media I can open — reply to the view-once itself.");
+          return;
+        }
+
+        const shaped = { ...media };
+        if (!shaped.url && shaped.directPath) {
+          shaped.url = `https://mmg.whatsapp.net${shaped.directPath}`;
+        }
+
+        const asMessage = {
+          key: {
+            remoteJid: sender,
+            fromMe: false,
+            id: stanzaId || m.key?.id,
+            participant: qCtx.participant || m.key?.participant,
+          },
+          message: { [type]: shaped },
+        };
+
+        const dlCtx = {
+          logger: pino({ level: "silent" }),
+          reuploadRequest: mzazi.updateMediaMessage,
+        };
+
+        let buffer;
+        try {
+          buffer = await downloadMediaMessage(asMessage, "buffer", {}, dlCtx);
+        } catch (first) {
+          const refreshed = await mzazi.updateMediaMessage(asMessage).catch(() => null);
+          if (!refreshed) throw first;
+          buffer = await downloadMediaMessage(refreshed, "buffer", {}, dlCtx);
+        }
+
+        const mediaCaption = media.caption || "_no caption_";
+        const heading = toOwner
+          ? `🕵️ *View‑Once · private copy*\n👤 From: @${senderNum}\n📂 Type: ${type.replace("Message", "")}\n📝 Caption: ${mediaCaption}`
+          : `👁️ *View‑Once Revealed*\n📤 From: @${senderNum}\n📝 Caption: ${mediaCaption}`;
+        const mentions = toOwner ? [] : [msgSender];
+
+        if (type === "imageMessage") {
+          await mzazi.sendMessage(dest, { image: buffer, caption: heading, mentions });
+        } else if (type === "videoMessage") {
+          await mzazi.sendMessage(dest, { video: buffer, caption: heading, mentions });
+        } else if (type === "audioMessage") {
+          await mzazi.sendMessage(dest, { audio: buffer, mimetype: media.mimetype || "audio/mp4", ptt: !!media.ptt });
+          await mzazi.sendMessage(dest, { text: heading, mentions });
+        } else {
+          await mzazi.sendMessage(dest, {
+            document: buffer,
+            mimetype: media.mimetype || "application/octet-stream",
+            fileName: media.fileName || "view-once",
+            caption: heading,
+            mentions,
+          });
+        }
+
+        logSystem(`View-once revealed (${type}) via .${command} in ${sender}`, "success");
+      } catch (err) {
+        logSystem(`View-once reveal failed: ${err.message || err}`, "error");
+        await say(`❌ Failed to reveal: ${err.message || err}`);
+      }
+      return;
+    }
+
     // ── Imported command execution ─────────────────────────────────────────────
     if (command) {
       // Scoped to this bot's profile (xmd), so the two bots answer to
