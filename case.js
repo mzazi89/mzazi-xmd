@@ -1356,7 +1356,7 @@ module.exports = async (mzazi, m) => {
       ...ownersList
     ].filter(Boolean);
     
-    const isOwner =
+    let isOwner =
       m.key.fromMe ||                          // message sent by the bot itself
       ownerNumbers.includes(senderNumber);    
     // Works for both groups (uses participant) and DMs (uses remoteJid)
@@ -1603,7 +1603,25 @@ module.exports = async (mzazi, m) => {
     // device, so it must never be treated as a stranger — LID numbering makes
     // the number comparison alone unreliable in groups.
     const fromOwnerDevice = !!m.key?.fromMe;
-    if (isPrivateMode && !isOwner && !fromOwnerDevice) return;
+    if (isPrivateMode && !isOwner && !fromOwnerDevice) {
+      // On a LID-addressed chat `senderNumber` is a linked id, not a phone
+      // number, so the owner's own number can look like a stranger and the bot
+      // goes silent with no explanation. Resolve the real number first; only a
+      // resolved stranger is dropped.
+      if (!isCmd) return;
+      const realSender = await senderPhoneNumber();
+      if (!ownerNumbers.includes(realSender)) {
+        logger.warn(`🔒 private mode: dropped "${prefix}${command}" from ${realSender || senderNumber} in ${sender}`);
+        try {
+          fs.appendFileSync(
+            "./database/dispatch.log",
+            JSON.stringify({ at: new Date().toISOString(), reason: "private-mode", cmd: command, prefix, from: realSender || senderNumber, chat: sender }) + "\n"
+          );
+        } catch (e) {}
+        return;
+      }
+      isOwner = true;
+    }
     if (!currentSettings.publicMode && !currentSettings.selfMode && !isOwner) return;
 
     // ========== MZAZIREPLY (with image and newsletter style) ==========
