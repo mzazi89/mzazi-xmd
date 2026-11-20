@@ -3876,6 +3876,12 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
       // would otherwise keep showing this bot's old name, so they get a socket
       // that restyles plain-text sends only. See theme.bindSocket.
       mzazi: theme.bindSocket(mzazi),
+      // The unthemed socket, for the rare command whose text is the USER'S
+      // words rather than the bot's own copy — `.hidetag` broadcasts an admin's
+      // announcement, and the restyler maps plain ASCII onto italic letterforms
+      // (and would mangle any URL in it into an unclickable string). Anything
+      // cosmetic the theme adds is wrong for content the bot did not write.
+      rawSocket: mzazi,
       mzazireply,
       n: undefined,
       name: undefined,
