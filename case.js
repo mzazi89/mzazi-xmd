@@ -624,6 +624,187 @@ const unwrapAntiDeleteMessage = (message) => {
   return current || {};
 };
 
+// ── ANTI-DELETE: what the report says ──────────────────────────────────────
+// A phone number a human can read, not an address a machine can route.
+// `254741388986:33@s.whatsapp.net` and `148623568461897@lid` are both "the
+// sender" to WhatsApp; neither is "the sender" to a person. The jid never
+// reaches the report — only these digits do.
+const prettyPhone = (value) => {
+  const digits = String(value || "").replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  const m = digits.match(/^(\d{1,3})(\d{3})(\d{3})(\d{3,4})$/);
+  return m ? `+${m[1]} ${m[2]} ${m[3]} ${m[4]}` : `+${digits}`;
+};
+
+const vcardBits = (vcard = "") => {
+  const out = { name: "", numbers: [] };
+  for (const raw of String(vcard || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^FN[;:]/i.test(line)) out.name = line.split(":").slice(1).join(":").trim();
+    else if (/^TEL/i.test(line)) {
+      const num = line.split(":").slice(1).join(":").trim();
+      if (num) out.numbers.push(num);
+    }
+  }
+  return out;
+};
+
+// Every message type, described in words. This is what makes "support every
+// message" true: media is forwarded as media, and everything WhatsApp can put
+// in a bubble (a location, a poll, a contact card, a reaction, a product) is
+// translated into a line the owner can actually read.
+// `type` is the key that holds the payload, so the media forwarder never has to
+// guess again, and `text` is the user's own words wherever they exist.
+// WhatsApp frequently ships `messageContextInfo` (and the group sender-key
+// distribution) NEXT TO the payload, sometimes before it. Keying off
+// Object.keys(...)[0] then labels a photo as "MessageContextInfo" and the
+// forwarder finds nothing to download. Every reader goes through this.
+const primaryMessageKey = (msg = {}) =>
+  Object.keys(msg || {}).find(
+    (k) => k !== "messageContextInfo" && k !== "senderKeyDistributionMessage" && k !== "deviceSentMessage"
+  ) || Object.keys(msg || {})[0] || "unknown";
+
+const describeDeletedMessage = (msg = {}) => {
+  const type = primaryMessageKey(msg);
+  const body = msg[type] || {};
+  const str = (v) => (typeof v === "string" ? v : "");
+  const base = { type, label: "Message", text: "", media: false, note: "" };
+
+  switch (type) {
+    case "conversation":
+      return { ...base, label: "Text", text: str(msg.conversation) };
+    case "extendedTextMessage":
+      return { ...base, label: "Text", text: str(body.text) };
+    case "imageMessage":
+      return { ...base, label: "Photo", text: str(body.caption), media: true };
+    case "videoMessage":
+      return { ...base, label: body.ptv ? "Video note" : "Video", text: str(body.caption), media: true };
+    case "ptvMessage":
+      return { ...base, label: "Video note", text: str(body.caption), media: true };
+    case "audioMessage": {
+      const secs = Number(body.seconds || 0);
+      return {
+        ...base, label: body.ptt ? "Voice note" : "Audio", media: true,
+        note: secs ? `⏱️ Duration: ${secs}s` : "",
+      };
+    }
+    case "stickerMessage":
+      return { ...base, label: body.isAnimated ? "Animated sticker" : "Sticker", media: true };
+    case "documentMessage": {
+      const name = str(body.fileName);
+      const cap = str(body.caption);
+      return {
+        ...base, label: "Document", media: true,
+        text: cap,
+        // The file name is often the whole story ("invoice.pdf"), so it is
+        // always reported, not only when there is no caption.
+        note: name ? `📄 File name: ${name}` : "",
+      };
+    }
+    case "documentWithCaptionMessage":
+      return { ...base, label: "Document", media: true, text: str(body.caption) };
+    case "contactMessage": {
+      const card = vcardBits(body.vcard);
+      return {
+        ...base, label: "Contact card",
+        text: [body.displayName || card.name, ...card.numbers].filter(Boolean).join("\n"),
+      };
+    }
+    case "contactsArrayMessage": {
+      const people = (body.contacts || []).map((c) => {
+        const card = vcardBits(c.vcard);
+        return [c.displayName || card.name, ...card.numbers].filter(Boolean).join(" · ");
+      }).filter(Boolean);
+      return { ...base, label: `${body.contacts?.length || people.length} contact cards`, text: people.join("\n") };
+    }
+    case "locationMessage": {
+      const lat = Number(body.degreesLatitude || 0);
+      const lng = Number(body.degreesLongitude || 0);
+      return {
+        ...base, label: "Location",
+        text: [str(body.name), str(body.address)].filter(Boolean).join("\n") ||
+          `https://maps.google.com/?q=${lat},${lng}`,
+        note: `https://maps.google.com/?q=${lat},${lng}`,
+      };
+    }
+    case "liveLocationMessage":
+      return { ...base, label: "Live location", text: "A live location was shared and then deleted." };
+    case "pollCreationMessage":
+    case "pollCreationMessageV2":
+    case "pollCreationMessageV3": {
+      const options = (body.options || []).map((o) => str(o.optionName)).filter(Boolean);
+      return {
+        ...base, label: "Poll",
+        text: [str(body.name), ...options.map((o, i) => `  ${i + 1}. ${o}`)].filter(Boolean).join("\n"),
+      };
+    }
+    case "reactionMessage":
+      return { ...base, label: "Reaction", text: str(body.text) };
+    case "buttonsMessage":
+      return { ...base, label: "Buttons", text: [str(body.contentText), str(body.footerText)].filter(Boolean).join("\n") };
+    case "templateMessage": {
+      const t = body.hydratedTemplate || body.hydratedFourRowTemplate || {};
+      return { ...base, label: "Template", text: [str(t.hydratedTitleText), str(t.hydratedContentText)].filter(Boolean).join("\n") };
+    }
+    case "listMessage":
+      return { ...base, label: "List", text: [str(body.title), str(body.description), str(body.buttonText)].filter(Boolean).join("\n") };
+    case "interactiveMessage": {
+      const b = body.body || {};
+      return { ...base, label: "Interactive", text: str(b.text) };
+    }
+    case "eventMessage":
+      return { ...base, label: "Event", text: str(body.name) };
+    case "productMessage":
+      return { ...base, label: "Product", text: str(body.product?.title) };
+    case "orderMessage":
+      return {
+        ...base, label: "Order",
+        text: [str(body.orderTitle), body.itemCount ? `${body.itemCount} item(s)` : ""].filter(Boolean).join("\n"),
+      };
+    case "invoiceMessage":
+      return { ...base, label: "Invoice", text: str(body.note) };
+    case "groupInviteMessage":
+      return { ...base, label: "Group invite", text: [str(body.groupName), str(body.caption)].filter(Boolean).join("\n") };
+    case "protocolMessage":
+      return { ...base, label: "System", text: `protocol type ${String(body.type)}` };
+    default: {
+      // "unknownThingMessage" -> "Unknown Thing": readable, not a proto key.
+      const words = type.replace(/Message$/, "").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
+      return {
+        ...base,
+        label: words ? words.charAt(0).toUpperCase() + words.slice(1) : "Message",
+        note: "This type cannot be replayed, so it is described instead of forwarded.",
+      };
+    }
+  }
+};
+
+// The report itself. Cute on purpose — it lands in the owner's own chat and it
+// is the one message they will read at 2am — but every line is information:
+// who, where, when, what, and the words themselves, quoted so they are visibly
+// not the bot's own voice.
+const buildAntiDeleteNotice = ({ botLabel, senderName, senderPhone, isGroup, chatLabel, label, sizeLabel, text, when, note }) => {
+  const who = senderName && senderPhone
+    ? `${senderName} · ${senderPhone}`
+    : senderPhone || senderName || "Someone";
+  const lines = [
+    "💙✨ *ANTI-DELETE* ✨💙",
+    "┏━━━━━━━━━━━━━━━━━━",
+    `┃ 🙋🏽 *Deleted by:* ${who}`,
+    `┃ ${isGroup ? "👥" : "💬"} *Where:* ${chatLabel}`,
+    `┃ 🕰️ *When:* ${when}`,
+    `┃ 📎 *Type:* ${label}${sizeLabel ? ` (${sizeLabel})` : ""}`,
+    "┗━━━━━━━━━━━━━━━━━━",
+  ];
+  if (text) {
+    lines.push("", "📝 *The full message:*");
+    for (const line of String(text).split("\n")) lines.push(`> ${line}`);
+  }
+  if (note) lines.push("", `ℹ️ ${note}`);
+  lines.push("", `— 🌸 ${botLabel} · MZAZI TECH`);
+  return lines.join("\n");
+};
+
 // ── PRESENCE: "typing…" / "recording audio…" while a chat is active ─────────
 // One timer per session+chat, kept at module scope because case.js is called
 // once per message: a timer created inside the handler would be orphaned on the
@@ -1189,21 +1370,26 @@ module.exports = async (mzazi, m) => {
         }
       };
 
-      const messageType = Object.keys(msgObj || {})[0] || "message";
-      const mediaLabel = messageType === "imageMessage" ? "Image"
-        : messageType === "videoMessage" ? "Video"
-        : messageType === "audioMessage" ? (msgObj.audioMessage?.ptt ? "Voice note" : "Audio")
-        : messageType === "stickerMessage" ? "Sticker"
-        : messageType === "documentMessage" ? "Document"
-        : "Text";
+      // What was deleted, described rather than type-cased. `described.text`
+      // is the sender's own words for every type that carries any, and
+      // `described.type` is the payload key the media forwarder needs.
+      const described = describeDeletedMessage(msgObj || {});
+      const declaredSize = Number(msgObj?.[described.type]?.fileLength || 0) || 0;
 
-      // Declared size, when WhatsApp supplied one. Used to skip a download
-      // that would not survive the container's memory — see the media block.
-      const declaredSize = Number(msgObj[messageType]?.fileLength || 0) || 0;
+      // Who deleted it. The name WhatsApp attached to the message when we
+      // cached it, then the phone number — never the jid.
+      // Prefer the PN form (participantAlt / remoteJidAlt). A LID sender has no
+      // number to disclose, and printing the 15-digit lid would be exactly the
+      // machine address this report exists to avoid — so in that case the name
+      // carries the line on its own.
+      const pnJid = cached.senderPn
+        || (String(cached.senderJid || "").endsWith("@s.whatsapp.net") ? cached.senderNum : "");
+      const senderPhone = prettyPhone(pnJid);
+      const senderName = String(cached.pushName || "").trim();
 
-      // Group subject so the owner can tell which chat it came from. Bounded:
-      // a metadata lookup must never hold up the report.
-      let chatLabel = chatId;
+      // Where. A group subject must never hold the report up, so the lookup is
+      // bounded and simply falls back to "this group".
+      let chatLabel = isGroup2 ? "This group" : "Private chat";
       if (isGroup2) {
         try {
           const meta = await Promise.race([
@@ -1214,15 +1400,29 @@ module.exports = async (mzazi, m) => {
         } catch (e) {}
       }
 
-      const notice =
-        `🗑️ *Anti-Delete Alert*\n` +
-        `━━━━━━━━━━━━━━━━━━━━\n` +
-        `👤 *Sender:* +${senderNum || "unknown"}\n` +
-        `${isGroup2 ? `👥 *Group:* ${chatLabel}\n` : "💬 *Chat:* Private message\n"}` +
-        `📌 *Type:* ${mediaLabel}${declaredSize ? ` (${formatBytes(declaredSize)})` : ""}\n` +
-        (caption ? `📝 *Caption:* ${caption}\n` : "") +
-        `⏰ *Deleted:* ${new Date().toLocaleString()}\n` +
-        `━━━━━━━━━━━━━━━━━━━━`;
+      const when = new Date().toLocaleString("en-GB", {
+        day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+      });
+      // Two renderings of the same report, because WhatsApp caps a media
+      // CAPTION at 1024 characters while a text message holds far more.
+      //   fullNotice  — header + the deleted words + any caveat.
+      //   shortNotice — header only, used as the caption when the words would
+      //                 not fit, with fullNotice sent as a second message.
+      // Without this split, a long deleted paragraph attached to a photo would
+      // fail to send and the owner would get nothing at all.
+      const noticeBase = {
+        botLabel: getBotName(botPhoneNum) || config.botName || "MZAZI XMD",
+        senderName,
+        senderPhone,
+        isGroup: isGroup2,
+        chatLabel,
+        label: described.label,
+        sizeLabel: declaredSize ? formatBytes(declaredSize) : "",
+        when,
+      };
+      const shortNotice = buildAntiDeleteNotice({ ...noticeBase, text: "", note: "" });
+      const fullNotice = () => buildAntiDeleteNotice({ ...noticeBase, text: described.text, note: described.note });
+
       const contextInfo = {
         // No mentions: this lands in the owner's own chat, where an @-tag on
         // the sender resolves to nothing.
@@ -1231,17 +1431,11 @@ module.exports = async (mzazi, m) => {
       };
 
       try {
-        const mediaTypes = new Set([
-          "imageMessage",
-          "videoMessage",
-          "audioMessage",
-          "stickerMessage",
-          "documentMessage",
-        ]);
+        const CAPTION_LIMIT = 1000; // 1024 minus room for the media's own lines
         let sentMedia = false;
 
-        if (mediaTypes.has(messageType)) {
-          const media = msgObj[messageType];
+        if (described.media) {
+          const media = msgObj[described.type];
           const hasMediaKey = !!(media?.mediaKey || media?.fileEncSha256);
           if (hasMediaKey) {
             try {
@@ -1259,33 +1453,50 @@ module.exports = async (mzazi, m) => {
                   reuploadRequest: mzazi.updateMediaMessage,
                 }
               );
-              const mediaPayload = messageType === "imageMessage"
-                ? { image: buffer, caption: notice }
-                : messageType === "videoMessage"
-                  ? { video: buffer, caption: notice }
-                  : messageType === "audioMessage"
+              const canCaption = ["imageMessage", "videoMessage", "ptvMessage", "documentMessage"].includes(described.type);
+              const attempted = fullNotice();
+              // The whole report as the caption when it fits; otherwise the
+              // header as the caption and the words in a follow-up message.
+              const caption = canCaption
+                ? (attempted.length <= CAPTION_LIMIT ? attempted : shortNotice)
+                : undefined;
+              const mediaPayload = described.type === "imageMessage"
+                ? { image: buffer, caption }
+                : (described.type === "videoMessage" || described.type === "ptvMessage")
+                  ? { video: buffer, caption }
+                  : described.type === "audioMessage"
                     ? { audio: buffer, mimetype: media.mimetype || "audio/mp4", ptt: !!media.ptt }
-                    : messageType === "stickerMessage"
+                    : described.type === "stickerMessage"
                       ? { sticker: buffer }
                       : {
                         document: buffer,
                         mimetype: media.mimetype || "application/octet-stream",
                         fileName: media.fileName || "deleted_file",
-                        caption: notice,
+                        caption,
                       };
               await sendToOwner({ ...mediaPayload, contextInfo });
               sentMedia = true;
-              if (messageType === "audioMessage" || messageType === "stickerMessage") {
-                await sendToOwner({ text: notice, contextInfo });
+              // Audio and stickers take no caption; a caption that had to be
+              // shortened carries no words. Either way the text follows.
+              if (!caption || caption === shortNotice) {
+                await sendToOwner({ text: attempted, contextInfo });
               }
             } catch (mediaError) {
+              // The bytes are gone (expired URL, key mismatch, oversized). The
+              // report still goes out, with the size and the reason, because a
+              // deletion the owner cannot see is worse than one they can.
               logger.warn("AntiDelete media restore failed:", mediaError?.message);
+              described.note = [described.note, `⚠️ The attachment itself could not be restored (${mediaError?.message || "unknown error"}).`]
+                .filter(Boolean).join("\n");
             }
+          } else {
+            described.note = [described.note, "⚠️ No media key was cached, so the attachment cannot be restored."]
+              .filter(Boolean).join("\n");
           }
         }
 
         if (!sentMedia) {
-          await sendToOwner({ text: notice, contextInfo });
+          await sendToOwner({ text: fullNotice(), contextInfo });
         }
       } catch (restoreError) {
         logger.error("AntiDelete restore error:", restoreError?.message);
@@ -1308,11 +1519,18 @@ module.exports = async (mzazi, m) => {
       // media type and keys are stored — without this the media label is wrong
       // and downloadMediaMessage fails when the message is later deleted.
       const _rawMsg = unwrapAntiDeleteMessage(message);
-      const _mt = Object.keys(_rawMsg)[0];
-      const _cap =
+      const _mt = primaryMessageKey(_rawMsg);
+      const _txt =
         _rawMsg.conversation ||
         _rawMsg.extendedTextMessage?.text ||
         _rawMsg[_mt]?.caption || "";
+      // A phone jid for the sender, when WhatsApp sent one alongside the LID.
+      // `participantAlt`/`remoteJidAlt` are the PN forms: without them a report
+      // about a LID participant can only name a 15-digit internal id.
+      const _alt = _isGrp ? m.key.participantAlt : m.key.remoteJidAlt;
+      const _pn = String(_alt || "").endsWith("@s.whatsapp.net")
+        ? _alt
+        : String(_sndr || "").endsWith("@s.whatsapp.net") ? _sndr : "";
       const _cacheKey = antiDeleteCacheKey(m.key, sender);
       messageCache.set(_cacheKey, {
         cacheKey: _cacheKey,
@@ -1321,8 +1539,17 @@ module.exports = async (mzazi, m) => {
         chatId: sender,
         senderJid: _sndr,
         senderNum: _sNum,
+        senderPn: _pn,
+        // The name the sender's own WhatsApp shows. This is what makes the
+        // report read "Deleted by: Mrs Mzazi" instead of a number.
+        pushName: m.pushName || "",
         msgObj: _rawMsg,
-        caption: _cap.slice(0, 200)
+        msgType: _mt,
+        // Full text, not a 200-character preview: the point of the report is
+        // that the owner still gets the words. Capped at 4000 so one enormous
+        // paste cannot grow the in-memory cache without limit.
+        text: String(_txt).slice(0, 4000),
+        caption: String(_txt).slice(0, 200)
       });
     }
 
