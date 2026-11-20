@@ -1370,51 +1370,21 @@ module.exports = async (mzazi, m) => {
     // prefix handling
     const sessionSettings = loadJSON(`./database/sessions/${botPhoneNum}/settings.json`, {});
     const customPrefix = sessionSettings.customPrefix; // undefined = never set, "" = none mode, "x" = custom
-    const noPrefixMode = customPrefix === "";           // explicitly set to none via .setprefix none
+    // ── one prefix, one rule ─────────────────────────────────────────────────
+    // The prefix is whatever `.setprefix` stored for this session, or "." when
+    // nothing is set. The old code also treated @ _ ! ? ~ ^ and a dozen other
+    // characters as prefixes — which is how "@<someone>" became a command named
+    // after a number — and had a "none" mode where every message was a command.
+    // Both are gone: the same text now behaves the same way in every chat.
+    const configuredPrefix = typeof customPrefix === "string" ? customPrefix.trim() : "";
+    prefix = configuredPrefix || ".";
 
-    let prefix = ".";
-    let isCmd = false;
-    let command = "";
-    let args = [];
-    let usedPrefix = false;
-
-    if (noPrefixMode) {
-      // No-prefix mode: every non-empty message is a potential command.
-      //
-      // The usual prefix is still tolerated. After `.setprefix none` the body
-      // went straight to the registry, so ".play" looked up a command named
-      // ".play", found nothing, and returned without a word — every command
-      // typed the way it had been typed for months simply stopped answering.
-      let body = budy.trim();
-      // A leading dot is still honoured here, and it is the only thing that counts
-      // as "used the prefix" in this mode.
-      usedPrefix = body.startsWith(".");
-      if (body.startsWith(".")) body = body.slice(1).trim();
-      prefix = "";
-      isCmd = body.length > 0;
-      command = isCmd ? body.split(/ +/).shift().toLowerCase() : "";
-      args = isCmd ? body.split(/ +/).slice(1) : [];
-    } else if (customPrefix) {
-      // Custom prefix set: use it, fall back to config prefix if message doesn't match
-      const escaped = customPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (new RegExp(`^${escaped}`).test(budy)) {
-        prefix = customPrefix;
-      } else if (config.prefix?.test?.(budy)) {
-        prefix = budy.match(config.prefix)[0];
-      } else {
-        prefix = ".";
-      }
-      isCmd = budy.length > 0 && budy.startsWith(prefix);
+    {
+      const body = budy.trim();
+      isCmd = body.length > prefix.length && body.startsWith(prefix);
       usedPrefix = isCmd;
-      command = isCmd ? budy.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : "";
-      args = isCmd ? budy.slice(prefix.length).trim().split(/ +/).slice(1) : [];
-    } else {
-      // Default: use config.prefix regex or "." fallback
-      prefix = config.prefix?.test?.(budy) ? budy.match(config.prefix)[0] : ".";
-      isCmd = budy.length > 0 && budy.startsWith(prefix);
-      usedPrefix = isCmd;
-      command = isCmd ? budy.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : "";
-      args = isCmd ? budy.slice(prefix.length).trim().split(/ +/).slice(1) : [];
+      command = isCmd ? body.slice(prefix.length).trim().split(/ +/).shift().toLowerCase() : "";
+      args = isCmd ? body.slice(prefix.length).trim().split(/ +/).slice(1) : [];
     }
 
     // Card buttons come back as the label or id the button carried ("🏓 Ping",
@@ -1453,7 +1423,7 @@ module.exports = async (mzazi, m) => {
             stage: "parsed",
             bot: botPhoneNum,
             cmd: command,
-            prefix: noPrefixMode ? "" : prefix,
+            prefix,
             chat: sender,
             from: senderNum,
             fromMe: !!m.key.fromMe,
@@ -1468,7 +1438,7 @@ module.exports = async (mzazi, m) => {
     if (process.env.LOG_MESSAGE_CONTENT === "true" && budy && budy.length <= 40) {
       console.log(
         `[dispatch] ${isGroup ? "group" : "dm"} fromMe=${!!m.key.fromMe} ` +
-        `mode=${noPrefixMode ? "none" : prefix || "dot"} ` +
+        `prefix=${prefix || "(none)"} ` +
         `isCmd=${isCmd} cmd="${command}" words=${args.length}`
       );
     }
@@ -2644,6 +2614,9 @@ const mzazireply = async (teks, opts = {}) => {
       bypassDownload: opts.bypassDownload ?? true,
       includesUnifiedResponse: opts.includesUnifiedResponse ?? true,
     });
+    try {
+      fs.appendFileSync("./database/dispatch.log", JSON.stringify({ at: new Date().toISOString(), stage: "reply-ok", bot: botPhoneNum, cmd: command, to: String(target), via: "card" }) + "\n");
+    } catch (e) {}
 
     if (wantsCard && msgId) {
       __cardedMessages.set(msgId, Date.now());
@@ -2657,10 +2630,13 @@ const mzazireply = async (teks, opts = {}) => {
     // The card is presentation, the text is the message. A builder failure must
     // never turn a working command into silence.
     console.log(`[reply] rich card failed, falling back to text: ${e.message}`);
+    try {
+      fs.appendFileSync("./database/dispatch.log", JSON.stringify({ at: new Date().toISOString(), stage: "reply-card-error", bot: botPhoneNum, cmd: command, err: String(e.message || e) }) + "\n");
+    } catch (err2) {}
   }
 
   try {
-    return await mzazi.sendMessage(target, {
+    const sent = await mzazi.sendMessage(target, {
       text,
       contextInfo: {
         forwardingScore: 2,
@@ -2671,8 +2647,15 @@ const mzazireply = async (teks, opts = {}) => {
         },
       },
     });
+    try {
+      fs.appendFileSync("./database/dispatch.log", JSON.stringify({ at: new Date().toISOString(), stage: "reply-ok", bot: botPhoneNum, cmd: command, to: String(target), via: "text" }) + "\n");
+    } catch (e1) {}
+    return sent;
   } catch (e) {
     console.log(`[reply] send failed: ${e.message}`);
+    try {
+      fs.appendFileSync("./database/dispatch.log", JSON.stringify({ at: new Date().toISOString(), stage: "reply-error", bot: botPhoneNum, cmd: command, to: String(target), err: String(e.message || e) }) + "\n");
+    } catch (err3) {}
   }
 };
 
