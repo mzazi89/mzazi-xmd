@@ -5351,7 +5351,13 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     // Native on purpose: the filter it switches on lives in this file too, so
     // the toggle and the enforcement ship together and cannot drift into the
     // "setting saved, nothing enforces it" state a registry command could.
-    if (["antigroupstatusmention", "antigsm", "antistatusmention"].includes(command)) {
+    // Prefix match on purpose: `.antigroupstatus` is what a person actually
+    // types, and a toggle that answers only to its exact long name reads as a
+    // dead command. Anything that starts with antigroupstatus is this command.
+    const _isGroupStatusCmd = command === "antigsm"
+      || command === "antistatusmention"
+      || command.startsWith("antigroupstatus");
+    if (_isGroupStatusCmd) {
       if (!isGroup) return mzazireply("🚫 Group only!");
       if (!isAdmin && !isOwner) return mzazireply("🚫 Admins only!");
 
