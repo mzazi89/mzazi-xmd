@@ -823,6 +823,19 @@ const buildAntiDeleteNotice = ({
   return lines.join("\n");
 };
 
+// ── GROUP STATUS MENTIONS ──────────────────────────────────────────────────
+// WhatsApp now lets a member post a status that TAGS an entire group, and it
+// lands in the chat as an ordinary inbound message. There are two shapes:
+// `groupStatusMentionMessage` (a status mentioning the group) and
+// `groupStatusMessageV2` (a status shared into the group). Both are wrapped in
+// ephemeral/viewOnce envelopes like anything else, so the check unwraps first
+// and matches the family rather than one exact key — a future variant should be
+// caught by the same rule instead of quietly slipping through.
+const groupStatusKey = (message) => {
+  const inner = unwrapMessage(message) || {};
+  return Object.keys(inner).find((key) => /^groupStatus/i.test(key)) || "";
+};
+
 // ── PRESENCE: "typing…" / "recording audio…" while a chat is active ─────────
 // One timer per session+chat, kept at module scope because case.js is called
 // once per message: a timer created inside the handler would be orphaned on the
@@ -2712,6 +2725,19 @@ You:`.trim();
           return false;
         }
       };
+
+      // ── ANTI GROUP STATUS MENTION ─────────────────────────
+      // Same three actions as every other filter here: delete, warn, or kick.
+      // The message is a group-wide ping from one person's status, so it is
+      // treated exactly like a link in a no-link group.
+      const _antiGsmMode = _gs.antigroupstatusmention;
+      if (_antiGsmMode && _antiGsmMode !== 'off' && _antiGsmMode !== false) {
+        const _gsKey = groupStatusKey(message);
+        if (_gsKey) {
+          await applyMode(_antiGsmMode, 'group status mentions');
+          return;
+        }
+      }
 
       // ── ANTILINK ──────────────────────────────────────────
       const _antilinkMode = _gs.antilink;
@@ -5321,6 +5347,45 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     // messageCache, so this reads from there first and treats the quote as a
     // fallback. If neither carries a download path, the phone is asked to
     // re-upload the media and the download is retried once.
+    // ── ANTI GROUP STATUS MENTION ──────────────────────────────────────────
+    // Native on purpose: the filter it switches on lives in this file too, so
+    // the toggle and the enforcement ship together and cannot drift into the
+    // "setting saved, nothing enforces it" state a registry command could.
+    if (["antigroupstatusmention", "antigsm", "antistatusmention"].includes(command)) {
+      if (!isGroup) return mzazireply("🚫 Group only!");
+      if (!isAdmin && !isOwner) return mzazireply("🚫 Admins only!");
+
+      const sub = String(args[0] || "").toLowerCase();
+      const modes = ["off", "delete", "warn", "kick"];
+      const current = getGroupSettings(sender).antigroupstatusmention || "off";
+
+      if (!sub || !modes.includes(sub)) {
+        return mzazireply(
+          `🛡️ *ANTI GROUP STATUS MENTION*\n\n` +
+          `Current mode: *${String(current).toUpperCase()}*\n\n` +
+          `WhatsApp lets a member post a status that tags this whole group, and it ` +
+          `arrives here as a normal message. With this on, that message is removed ` +
+          `and the person who posted it is warned or kicked.\n\n` +
+          `*Usage:* ${prefix}${command} <mode>\n\n` +
+          `🗑️ *delete* — remove it, nothing else\n` +
+          `🚨 *warn* — remove it, warn the sender (3 warnings = kick)\n` +
+          `👢 *kick* — remove it, kick the sender immediately\n` +
+          `❌ *off* — leave group status mentions alone`
+        );
+      }
+
+      setGroupSetting(sender, "antigroupstatusmention", sub);
+      const emoji = { delete: "🗑️", warn: "🚨", kick: "👢", off: "❌" };
+      const extra = sub === "warn" ? "\n🚨 3 warnings = automatic kick"
+        : sub === "kick" ? "\n👢 first offence = kick"
+          : sub === "delete" ? "\n🗑️ the message is removed and the sender is not warned"
+            : "";
+      return mzazireply(
+        `🛡️ *ANTI GROUP STATUS MENTION* ${sub === "off" ? "❌ OFF" : "✅ ON"}\n\n` +
+        `Mode: ${emoji[sub]} *${sub.toUpperCase()}*${extra}`
+      );
+    }
+
     if (command === "vv" || command === "vv2") {
       const toOwner = command === "vv2";
       if (toOwner && !isOwner) return; // silent, as before
