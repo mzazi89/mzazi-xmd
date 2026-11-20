@@ -1417,7 +1417,50 @@ module.exports = async (mzazi, m) => {
       args = isCmd ? budy.slice(prefix.length).trim().split(/ +/).slice(1) : [];
     }
 
+    // Card buttons come back as the label or id the button carried ("🏓 Ping",
+    // "menu") — never with the prefix the parser needs, so a tap used to do
+    // nothing at all. Map the quick-action ids onto their commands.
+    if (!isCmd && budy) {
+      const _btnType = messageType(unwrapMessage(m.message));
+      if (
+        ["interactiveResponseMessage", "buttonsResponseMessage", "templateButtonReplyMessage", "listResponseMessage"].includes(_btnType)
+      ) {
+        const _word = String(budy).trim().toLowerCase().replace(/^[^a-z0-9]+/i, "").replace(/\s+/g, "");
+        const _quick = ["menu", "ping", "runtime", "owner", "help", "report", "alive", "uptime"];
+        if (_quick.includes(_word)) {
+          isCmd = true;
+          command = _word;
+          args = [];
+          prefix = "";
+          usedPrefix = false;
+        }
+      }
+    }
+
     const text = args.join(" ");
+    // Persistent trace of parsed commands only. When a command gets no reply,
+    // this file says whether it was parsed at all, and the later "registry"
+    // line says whether it reached dispatch — the two together separate a
+    // listener-level drop from a gate inside this file.
+    if (isCmd) {
+      try {
+        const dbg = "./database/dispatch.log";
+        if (fs.existsSync(dbg) && fs.statSync(dbg).size > 300000) fs.writeFileSync(dbg, "");
+        fs.appendFileSync(
+          dbg,
+          JSON.stringify({
+            at: new Date().toISOString(),
+            stage: "parsed",
+            bot: botPhoneNum,
+            cmd: command,
+            prefix: noPrefixMode ? "" : prefix,
+            chat: sender,
+            from: senderNum,
+            fromMe: !!m.key.fromMe,
+          }) + "\n"
+        );
+      } catch (e) {}
+    }
 
     // Off by default: this line prints the parsed command, which is the user's
     // own words. The group logger below no longer prints message content, and a
@@ -1549,6 +1592,24 @@ module.exports = async (mzazi, m) => {
       return jid;
     };
 
+    // Where a reply must actually go. Some chats are addressed by a Linked ID
+    // (@lid) — including the bot's own "message yourself" chat — and sending to
+    // that form is refused, while the phone-number form is accepted. Every
+    // reply helper resolves through here so a command is never answered into a
+    // void.
+    const outboundJid = async (jid) => {
+      const raw = String(jid || "");
+      if (!(raw.endsWith("@lid") || raw.endsWith("@hosted_lid"))) return jid;
+      if (botLid && normalizeJid(raw) === normalizeJid(botLid) && mzazi.user?.id) {
+        return mzazi.user.id;
+      }
+      if (!isGroup && m.key?.remoteJidAlt && String(m.key.remoteJidAlt).endsWith("@s.whatsapp.net")) {
+        return m.key.remoteJidAlt;
+      }
+      const resolved = await resolveJid(raw);
+      return resolved && String(resolved).endsWith("@s.whatsapp.net") ? resolved : jid;
+    };
+
     // ─── The sender's REAL phone number ──────────────────────────────────────
     // WhatsApp increasingly addresses a chat by Linked ID (@lid), and a LID's
     // numeric part is NOT a phone number. `senderNumber` is only the digits of the
@@ -1615,7 +1676,7 @@ module.exports = async (mzazi, m) => {
         try {
           fs.appendFileSync(
             "./database/dispatch.log",
-            JSON.stringify({ at: new Date().toISOString(), reason: "private-mode", cmd: command, prefix, from: realSender || senderNumber, chat: sender }) + "\n"
+            JSON.stringify({ at: new Date().toISOString(), stage: "gate", bot: botPhoneNum, reason: "private-mode", cmd: command, prefix, from: realSender || senderNumber, chat: sender }) + "\n"
           );
         } catch (e) {}
         return;
@@ -1634,10 +1695,11 @@ const mzazireply2 = async (txt, { quoted = null, mentions = [] } = {}) => {
     mentionedJid: mentions,
     ...(quoted ? { stanzaId: quoted.key?.id, participant: quoted.key?.remoteJid, quotedMessage: quoted.message } : {}),
   };
+  const target = await outboundJid(sender);
   try {
-    await mzazi.sendMessage(sender, { text: txt, contextInfo: ctx }, { quoted });
+    await mzazi.sendMessage(target, { text: txt, contextInfo: ctx }, { quoted });
   } catch {
-    try { await mzazi.sendMessage(sender, { text: txt }); } catch {}
+    try { await mzazi.sendMessage(target, { text: txt }); } catch {}
   }
 };
     const getMenuPic = () => {
@@ -2521,6 +2583,7 @@ const mzazireply = async (teks, opts = {}) => {
   // session, so two bots on one server answer under their own names.
   const botName = getBotName(botPhoneNum) || config.botName || "MZAZI XMD";
 
+  const target = await outboundJid(sender);
   const msgId = (m && m.key && m.key.id) || "";
   const alreadyCarded = msgId ? __cardedMessages.has(msgId) : false;
   const wantsCard = !opts.plain && !alreadyCarded && !__isStatusLine(text);
@@ -2576,7 +2639,7 @@ const mzazireply = async (teks, opts = {}) => {
     // ── Send ──
     // includesUnifiedResponse must stay true: with it off the client is handed
     // the raw GenAI blocks and prints "[UNSUPPORTED_TYPE …]" instead of a card.
-    await aiRich.send(sender, {
+    await aiRich.send(target, {
       quoted: opts.quoted ?? m,
       bypassDownload: opts.bypassDownload ?? true,
       includesUnifiedResponse: opts.includesUnifiedResponse ?? true,
@@ -2597,7 +2660,7 @@ const mzazireply = async (teks, opts = {}) => {
   }
 
   try {
-    return await mzazi.sendMessage(sender, {
+    return await mzazi.sendMessage(target, {
       text,
       contextInfo: {
         forwardingScore: 2,
@@ -5122,6 +5185,12 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
       // Scoped to this bot's profile (xmd), so the two bots answer to
       // entirely different command sets from the one registry.
       const remoteCmd = getRemoteCommand(command, profileId);
+      try {
+        fs.appendFileSync(
+          "./database/dispatch.log",
+          JSON.stringify({ at: new Date().toISOString(), stage: "registry", bot: botPhoneNum, cmd: command, found: !!remoteCmd }) + "\n"
+        );
+      } catch (e) {}
       if (remoteCmd) {
         // ── GROUP LOCK (lockgc) ───────────────────────────────────────────
         // While a group is locked, block admin changes + mass removal for
@@ -5198,7 +5267,7 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
               // The helper adds a presence flicker and a quote; if that path is
               // unhappy, the customer should still get their pong.
               try {
-                await mzazi.sendMessage(sender, { text }, { quoted: m });
+                await mzazi.sendMessage(await outboundJid(sender), { text }, { quoted: m });
               } catch (e2) {
                 console.log(`[ping] reply failed — ${e.message} / ${e2.message}`);
               }

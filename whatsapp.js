@@ -539,13 +539,13 @@ Type <b>.menu</b> to access control panel.
         loadJSON(`./database/sessions/${phoneNumber}/autoread.json`, { enabled: false }).enabled === true;
       const unread = [];
 
-      let chatMessage = null;
+      const chatMessages = [];
       for (const incoming of messages) {
         if (incoming.key && incoming.key.remoteJid === "status@broadcast") {
           await handleStatusMessage(conn, incoming, phoneNumber);
         } else {
           if (autoRead && incoming.key && !incoming.key.fromMe) unread.push(incoming.key);
-          if (!chatMessage) chatMessage = incoming;
+          chatMessages.push(incoming);
         }
       }
 
@@ -557,11 +557,44 @@ Type <b>.menu</b> to access control panel.
         }
       }
 
-      const m = chatMessage;
-      if (!m) return;
-      // Allow stub messages (join/leave/promote events) through even when m.message is null
-      if (!m.message && !m.messageStubType) return;
-      await require("./case")(conn, m);
+      // Every chat message in the batch, not just the first. WhatsApp delivers
+      // bursts — a command typed straight after another message lands in the
+      // same upsert — and dispatching only messages[0] silently discarded the
+      // rest. That is what made commands "sometimes" get no answer at all.
+      for (const m of chatMessages) {
+        try {
+          try {
+            const _text = String(
+              m?.message?.conversation ||
+              m?.message?.extendedTextMessage?.text ||
+              m?.message?.imageMessage?.caption ||
+              ""
+            );
+            fs.appendFileSync(
+              "./database/dispatch.log",
+              JSON.stringify({
+                at: new Date().toISOString(),
+                stage: "in",
+                bot: phoneNumber,
+                batch: messages.length,
+                chat: m?.key?.remoteJid,
+                from: m?.key?.participant || m?.key?.remoteJid,
+                fromMe: !!m?.key?.fromMe,
+                alt: m?.key?.remoteJidAlt || m?.key?.participantAlt || null,
+                type: m?.message ? Object.keys(m.message)[0] : m?.messageStubType || "none",
+                cmdLike: /^[.!?@]/.test(_text),
+              }) + "\n"
+            );
+          } catch (e) {}
+
+          // Allow stub messages (join/leave/promote events) through even when
+          // m.message is null.
+          if (!m.message && !m.messageStubType) continue;
+          await require("./case")(conn, m);
+        } catch (err) {
+          console.error("Message handler error:", err);
+        }
+      }
     } catch (err) {
       console.error("Message handler error:", err);
     }
