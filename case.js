@@ -4947,13 +4947,51 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           : null;
 
         const MEDIA_TYPES = ["imageMessage", "videoMessage", "audioMessage", "documentMessage"];
+
+        // Three places the same media can be read from, best first:
+        //   1. the original stanza, by the id the quote points at
+        //   2. the quote itself
+        //   3. the newest media the quoted participant sent here recently —
+        //      needed because some view-once quotes carry no stanzaId at all,
+        //      so there is nothing to look up by id
+        const sources = [];
+        if (cached?.msgObj) sources.push({ src: "cache:id", msg: cached.msgObj, key: cached.key });
+        if (quoted) sources.push({ src: "quote", msg: quoted, key: null });
+        if (!cached?.msgObj) {
+          const recent = [...messageCache.values()]
+            .filter((v) =>
+              v.chatId === sender &&
+              (!qCtx.participant || v.senderJid === qCtx.participant) &&
+              Date.now() - (v.ts || 0) < 15 * 60 * 1000
+            )
+            .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+            .find((v) => {
+              const inner = unwrapMessage(v.msgObj || {});
+              return MEDIA_TYPES.some((k) => inner?.[k]);
+            });
+          if (recent?.msgObj) sources.push({ src: "cache:recent", msg: recent.msgObj, key: recent.key });
+        }
+
         let type = "";
         let media = null;
-        for (const candidate of [cached?.msgObj, quoted]) {
-          if (!candidate) continue;
-          const inner = unwrapMessage(candidate);
+        let mediaSource = "";
+        let mediaKeyRef = null;
+        // Prefer a copy that actually carries a download path; only fall back to
+        // one without it when nothing better exists (the reupload step below
+        // then has to recover the url).
+        for (const candidate of sources) {
+          const inner = unwrapMessage(candidate.msg);
           const found = MEDIA_TYPES.find((k) => inner?.[k]);
-          if (found) { type = found; media = inner[found]; break; }
+          if (!found) continue;
+          const candidateMedia = inner[found];
+          const usable = !!(candidateMedia?.url || candidateMedia?.directPath);
+          if (!media || (usable && !(media.url || media.directPath))) {
+            type = found;
+            media = candidateMedia;
+            mediaSource = candidate.src;
+            mediaKeyRef = candidate.key;
+          }
+          if (usable) break;
         }
 
         if (!media) {
@@ -4966,29 +5004,63 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           shaped.url = `https://mmg.whatsapp.net${shaped.directPath}`;
         }
 
-        const asMessage = {
-          key: {
-            remoteJid: sender,
-            fromMe: false,
-            id: stanzaId || m.key?.id,
-            participant: qCtx.participant || m.key?.participant,
-          },
-          message: { [type]: shaped },
-        };
+        // A reupload is addressed to the sender's device, so the key has to be
+        // the ORIGINAL message's — its id and its participant — not this
+        // command's key. The source we picked supplies it when it has one.
+        const resolvedKey = mediaKeyRef
+          ? { ...mediaKeyRef }
+          : {
+              remoteJid: sender,
+              fromMe: false,
+              id: stanzaId || m.key?.id,
+              participant: qCtx.participant || m.key?.participant,
+            };
+
+        let asMessage = { key: resolvedKey, message: { [type]: shaped } };
 
         const dlCtx = {
           logger: pino({ level: "silent" }),
           reuploadRequest: mzazi.updateMediaMessage,
         };
 
-        let buffer;
-        try {
-          buffer = await downloadMediaMessage(asMessage, "buffer", {}, dlCtx);
-        } catch (first) {
-          const refreshed = await mzazi.updateMediaMessage(asMessage).catch(() => null);
-          if (!refreshed) throw first;
-          buffer = await downloadMediaMessage(refreshed, "buffer", {}, dlCtx);
+        const diag = {
+          at: new Date().toISOString(),
+          cmd: command,
+          stanzaId: stanzaId || null,
+          cacheHit: !!cached,
+          source: mediaSource,
+          picked: type,
+          mediaKeys: Object.keys(media || {}).join(","),
+          hasUrl: !!media?.url,
+          hasDirectPath: !!media?.directPath,
+          hasMediaKey: !!media?.mediaKey,
+        };
+
+        // No url and no directPath: this stanza cannot be downloaded as it
+        // stands. Asking the sender's phone to upload it again is the only
+        // route left, and it has to run BEFORE the download — this Baileys
+        // build throws on a url-less media object instead of retrying itself.
+        if (!shaped.url && !shaped.directPath) {
+          const fresh = await Promise.race([
+            mzazi
+              .updateMediaMessage(asMessage)
+              .then((r) => r)
+              .catch((e) => ({ __error: String(e?.message || e) })),
+            new Promise((resolve) => setTimeout(() => resolve(null), 20000)),
+          ]);
+          diag.reupload = fresh ? (fresh.__error ? fresh.__error : "ok") : "timeout";
+          if (fresh && !fresh.__error) asMessage = fresh;
         }
+
+        diag.afterUrl = !!asMessage.message?.[type]?.url;
+        diag.afterDirectPath = !!asMessage.message?.[type]?.directPath;
+        try {
+          const dbg = "./database/vvdebug.log";
+          if (fs.existsSync(dbg) && fs.statSync(dbg).size > 200000) fs.writeFileSync(dbg, "");
+          fs.appendFileSync(dbg, JSON.stringify(diag) + "\n");
+        } catch (e) {}
+
+        const buffer = await downloadMediaMessage(asMessage, "buffer", {}, dlCtx);
 
         const mediaCaption = media.caption || "_no caption_";
         const heading = toOwner
@@ -5015,8 +5087,14 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
 
         logSystem(`View-once revealed (${type}) via .${command} in ${sender}`, "success");
       } catch (err) {
-        logSystem(`View-once reveal failed: ${err.message || err}`, "error");
-        await say(`❌ Failed to reveal: ${err.message || err}`);
+        const reason = String(err?.message || err);
+        logSystem(`View-once reveal failed: ${reason}`, "error");
+        // A url-less view-once is a delivery fact, not something retrying .vv
+        // changes — so say the one thing that actually helps.
+        const friendly = /not a media message|No valid media URL/i.test(reason)
+          ? "this view-once arrived without a download link. Ask the sender to send it again, then reply .vv to the new one."
+          : reason;
+        await say(`❌ Failed to reveal: ${friendly}`);
       }
       return;
     }
