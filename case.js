@@ -783,25 +783,43 @@ const describeDeletedMessage = (msg = {}) => {
 // is the one message they will read at 2am — but every line is information:
 // who, where, when, what, and the words themselves, quoted so they are visibly
 // not the bot's own voice.
-const buildAntiDeleteNotice = ({ botLabel, senderName, senderPhone, isGroup, chatLabel, label, sizeLabel, text, when, note }) => {
-  const who = senderName && senderPhone
-    ? `${senderName} · ${senderPhone}`
-    : senderPhone || senderName || "Someone";
+const buildAntiDeleteNotice = ({
+  botLabel, senderName, senderTag, deleterName, deleterTag, sameActor,
+  isGroup, chatLabel, label, sizeLabel, text, when, note,
+}) => {
+  // Two names, because they are often two different people: an admin can delete
+  // someone else's message, and "Deleted by" alone hides who wrote it. When they
+  // are the same person the pair collapses into one honest line instead of
+  // repeating a name twice.
+  const person = (name, tag) => {
+    if (name && tag) return `${name} (${tag})`;
+    return name || tag || "Unknown";
+  };
+  // Three cases, and the report is honest about which one it is: the author
+  // deleted their own message, someone else (usually an admin) deleted it, or
+  // the revoke arrived with no identity attached at all.
+  const deletedLine = sameActor || (senderTag && deleterTag && senderTag === deleterTag)
+    ? "│ 🗑️ *Deleted by:* the same person (their own message)"
+    : (deleterName || deleterTag)
+      ? `│ 🗑️ *Deleted by:* ${person(deleterName, deleterTag)}`
+      : "│ 🗑️ *Deleted by:* someone WhatsApp would not name";
+
   const lines = [
     "💙✨ *ANTI-DELETE* ✨💙",
-    "┏━━━━━━━━━━━━━━━━━━",
-    `┃ 🙋🏽 *Deleted by:* ${who}`,
-    `┃ ${isGroup ? "👥" : "💬"} *Where:* ${chatLabel}`,
-    `┃ 🕰️ *When:* ${when}`,
-    `┃ 📎 *Type:* ${label}${sizeLabel ? ` (${sizeLabel})` : ""}`,
-    "┗━━━━━━━━━━━━━━━━━━",
+    "╭───────────────────",
+    `│ ✍️ *Sent by:* ${person(senderName, senderTag)}`,
+    deletedLine,
+    `│ ${isGroup ? "👥" : "💬"} *Where:* ${chatLabel}`,
+    `│ 🕰️ *When:* ${when}`,
+    `│ 📎 *Type:* ${label}${sizeLabel ? ` (${sizeLabel})` : ""}`,
+    "╰───────────────────",
   ];
   if (text) {
-    lines.push("", "📝 *The full message:*");
+    lines.push("", "📝 *What it said:*");
     for (const line of String(text).split("\n")) lines.push(`> ${line}`);
   }
   if (note) lines.push("", `ℹ️ ${note}`);
-  lines.push("", `— 🌸 ${botLabel} · MZAZI TECH`);
+  lines.push("", `— 🌸 ${botLabel} · always watching 👀`);
   return lines.join("\n");
 };
 
@@ -1387,6 +1405,23 @@ module.exports = async (mzazi, m) => {
       const senderPhone = prettyPhone(pnJid);
       const senderName = String(cached.pushName || "").trim();
 
+      // Who pressed delete. Usually the author, but an admin clearing someone
+      // else's message arrives here as a different person — and that difference
+      // is the whole point of reporting it. `m` is the revoke stanza, so its
+      // participant (or its remoteJid, in a DM) is the actor.
+      const actorJid = m.key?.participant || m.key?.remoteJid || "";
+      const actorAlt = m.key?.participantAlt || m.key?.remoteJidAlt || "";
+      const actorPn = String(actorAlt).endsWith("@s.whatsapp.net")
+        ? actorAlt
+        : String(actorJid).endsWith("@s.whatsapp.net") ? actorJid : "";
+      const deleterPhone = prettyPhone(actorPn || (String(actorJid).endsWith("@s.whatsapp.net") ? actorJid.split("@")[0] : ""));
+      const deleterName = String(m.pushName || "").trim();
+      // The @token is what WhatsApp highlights; the number is what a human
+      // reads. Both come from the PN, never from a lid.
+      const senderTag = senderPhone ? `@${senderPhone.replace(/[^0-9]/g, "")}` : "";
+      const deleterTag = deleterPhone ? `@${deleterPhone.replace(/[^0-9]/g, "")}` : "";
+      const mentionJids = [...new Set([pnJid, actorPn].filter((j) => String(j).endsWith("@s.whatsapp.net")))];
+
       // Where. A group subject must never hold the report up, so the lookup is
       // bounded and simply falls back to "this group".
       let chatLabel = isGroup2 ? "This group" : "Private chat";
@@ -1410,10 +1445,17 @@ module.exports = async (mzazi, m) => {
       //                 not fit, with fullNotice sent as a second message.
       // Without this split, a long deleted paragraph attached to a photo would
       // fail to send and the owner would get nothing at all.
+      // Same jid on both sides = the author deleted their own message, which is
+      // the common case and deserves its own wording rather than a repeated name.
+      const sameActor = !!pnJid && !!actorPn &&
+        normalizeJid(pnJid) === normalizeJid(actorPn);
       const noticeBase = {
         botLabel: getBotName(botPhoneNum) || config.botName || "MZAZI XMD",
         senderName,
-        senderPhone,
+        senderTag,
+        deleterName,
+        deleterTag,
+        sameActor,
         isGroup: isGroup2,
         chatLabel,
         label: described.label,
@@ -1423,11 +1465,36 @@ module.exports = async (mzazi, m) => {
       const shortNotice = buildAntiDeleteNotice({ ...noticeBase, text: "", note: "" });
       const fullNotice = () => buildAntiDeleteNotice({ ...noticeBase, text: described.text, note: described.note });
 
+      // The "reply privately" shape: a quote box showing the message that was
+      // deleted, with both parties @-mentioned. The quote carries the original
+      // key, so WhatsApp can point at the real bubble; `quotedMessage` is the
+      // real payload, which is what gives the quote its own thumbnail instead
+      // of a text stub.
+      const quoteContext = cached.key?.id && msgObj && Object.keys(msgObj).length
+        ? {
+          stanzaId: cached.key.id,
+          remoteJid: cached.chatId || sender,
+          participant: cached.senderJid || cached.key.participant,
+          quotedMessage: msgObj,
+        }
+        : null;
       const contextInfo = {
-        // No mentions: this lands in the owner's own chat, where an @-tag on
-        // the sender resolves to nothing.
+        ...(quoteContext || {}),
         forwardingScore: 1,
         isForwarded: true,
+        mentions: mentionJids,
+      };
+      // A quote that WhatsApp refuses must not cost the owner the report, so
+      // every send falls back to the same notice without the quote attached.
+      const sendReport = async (payload) => {
+        try {
+          return await sendToOwner(payload);
+        } catch (e) {
+          if (!quoteContext) throw e;
+          const { stanzaId, remoteJid, participant, quotedMessage, ...bare } = payload.contextInfo || {};
+          logSystem(`AntiDelete: quoted send failed (${e.message}) — retrying without the quote`, "warn");
+          return sendToOwner({ ...payload, contextInfo: bare });
+        }
       };
 
       try {
@@ -1474,12 +1541,12 @@ module.exports = async (mzazi, m) => {
                         fileName: media.fileName || "deleted_file",
                         caption,
                       };
-              await sendToOwner({ ...mediaPayload, contextInfo });
+              await sendReport({ ...mediaPayload, contextInfo });
               sentMedia = true;
               // Audio and stickers take no caption; a caption that had to be
               // shortened carries no words. Either way the text follows.
               if (!caption || caption === shortNotice) {
-                await sendToOwner({ text: attempted, contextInfo });
+                await sendReport({ text: attempted, contextInfo });
               }
             } catch (mediaError) {
               // The bytes are gone (expired URL, key mismatch, oversized). The
@@ -1496,7 +1563,7 @@ module.exports = async (mzazi, m) => {
         }
 
         if (!sentMedia) {
-          await sendToOwner({ text: fullNotice(), contextInfo });
+          await sendReport({ text: fullNotice(), contextInfo });
         }
       } catch (restoreError) {
         logger.error("AntiDelete restore error:", restoreError?.message);
