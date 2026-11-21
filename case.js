@@ -5362,6 +5362,132 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     // messageCache, so this reads from there first and treats the quote as a
     // fallback. If neither carries a download path, the phone is asked to
     // re-upload the media and the download is retried once.
+    // ── .broadcast — owner only, one message to every group ────────────────
+    // Two things this must not do: block the chat while it runs, and hammer
+    // dozens of groups back to back. So it acknowledges first, sends in the
+    // background with 1.4-2.6s jitter between groups, and reports once at the
+    // end. Identical sends fired without a gap are exactly the pattern that gets
+    // a number restricted.
+    if (["broadcast", "bc", "broadcastall"].includes(command)) {
+      if (!isOwner) return mzazireply("🚫 Owner only!");
+
+      const _bcText = args.join(" ").trim();
+      const _bcCtx =
+        m.message?.extendedTextMessage?.contextInfo ||
+        m.message?.imageMessage?.contextInfo ||
+        m.message?.videoMessage?.contextInfo ||
+        m.message?.audioMessage?.contextInfo ||
+        m.message?.documentMessage?.contextInfo ||
+        m.message?.stickerMessage?.contextInfo ||
+        {};
+      const _bcQuoted = _bcCtx.quotedMessage ? unwrapMessage(_bcCtx.quotedMessage) : null;
+      const _bcDesc = _bcQuoted && Object.keys(_bcQuoted).length ? describeDeletedMessage(_bcQuoted) : null;
+
+      if (!_bcText && !_bcDesc) {
+        return mzazireply(
+          `📣 *BROADCAST*\n\n` +
+          `Send one message to every group I am in.\n\n` +
+          `*Usage:*\n${prefix}${command} Your message here\n` +
+          `${prefix}${command} (as a reply to a photo/video/voice note — the media is broadcast too)`
+        );
+      }
+
+      let _bcGroups = [];
+      try {
+        const _all = await mzazi.groupFetchAllParticipating();
+        _bcGroups = Object.keys(_all || {});
+      } catch (e) {
+        return mzazireply(`❌ Could not read the group list: ${e?.message || "unknown error"}`);
+      }
+      if (!_bcGroups.length) return mzazireply("📣 I am not in any group yet.");
+
+      // Build the payload ONCE, before the first send. A per-group build would
+      // re-upload the same photo N times.
+      const _bcKey = {
+        remoteJid: sender,
+        id: _bcCtx.stanzaId || "",
+        participant: _bcCtx.participant || m.key?.participant,
+        fromMe: false,
+      };
+      let _bcPayload = { text: _bcText || "📣" };
+      let _bcMediaNote = "";
+
+      if (_bcDesc?.media) {
+        try {
+          const _bcCached = _bcCtx.stanzaId ? findCachedAntiDeleteMessage(_bcKey) : null;
+          const _bcSource = _bcCached?.msgObj || _bcQuoted;
+          const _bcNode = _bcSource[_bcDesc.type] || {};
+          const _bcBuffer = await downloadMediaMessage(
+            { key: _bcKey, message: _bcSource },
+            "buffer",
+            {},
+            { logger: pino({ level: "silent" }), reuploadRequest: mzazi.updateMediaMessage }
+          );
+          const _bcUp = (mediaObject) => prepareWAMessageMedia(mediaObject, {
+            upload: (content) => mzazi.waUploadToServer(content),
+          });
+          const _bcPrepared = _bcDesc.type === "imageMessage"
+            ? await _bcUp({ image: _bcBuffer, mimetype: _bcNode.mimetype || "image/jpeg" })
+            : (_bcDesc.type === "videoMessage" || _bcDesc.type === "ptvMessage")
+              ? await _bcUp({ video: _bcBuffer, mimetype: _bcNode.mimetype || "video/mp4" })
+              : _bcDesc.type === "audioMessage"
+                ? await _bcUp({ audio: _bcBuffer, mimetype: _bcNode.mimetype || "audio/mp4", ptt: !!_bcNode.ptt })
+                : _bcDesc.type === "stickerMessage"
+                  ? await _bcUp({ sticker: _bcBuffer, mimetype: "image/webp" })
+                  : await _bcUp({
+                    document: _bcBuffer,
+                    mimetype: _bcNode.mimetype || "application/octet-stream",
+                    fileName: _bcNode.fileName || "broadcast_file",
+                  });
+          if (_bcPrepared && Object.keys(_bcPrepared).length) {
+            _bcPayload = { ..._bcPrepared };
+            const _capKey = ["imageMessage", "videoMessage", "documentMessage"].find((k) => _bcPayload[k]);
+            if (_capKey && _bcText) _bcPayload[_capKey].caption = _bcText;
+          }
+        } catch (e) {
+          // Last resort: relay the original message unchanged. It arrives marked
+          // as forwarded and cannot carry new words, but it beats half a
+          // broadcast.
+          _bcMediaNote = `\n_Media was forwarded as-is (${e?.message || "preparation failed"})._`;
+          _bcPayload = { forward: { key: _bcKey, message: _bcQuoted } };
+        }
+      }
+
+      await mzazireply(
+        `📣 *BROADCAST STARTED*\n\n` +
+        `Sending to *${_bcGroups.length}* groups${_bcDesc?.media ? ` with a ${_bcDesc.label.toLowerCase()}` : ""}.\n` +
+        `_I will report back when it finishes._${_bcMediaNote}`
+      );
+
+      // Deliberately not awaited: a hundred groups would hold this handler for
+      // minutes and delay every other message in the chat.
+      (async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        let ok = 0;
+        let failed = 0;
+        for (const groupJid of _bcGroups) {
+          try {
+            await mzazi.sendMessage(groupJid, _bcPayload);
+            ok += 1;
+          } catch (e) {
+            failed += 1;
+            logger.warn(`Broadcast to ${groupJid} failed:`, e?.message);
+          }
+          await sleep(1400 + Math.floor(Math.random() * 1200));
+        }
+        const summary =
+          `✅ *BROADCAST DONE*\n\n` +
+          `📤 Delivered: *${ok}/${_bcGroups.length}*\n` +
+          (failed ? `⚠️ Skipped: *${failed}* (no longer a member, or refused)` : `🎯 Every group received it.`);
+        try {
+          await mzazi.sendMessage(sender, { text: summary });
+        } catch (e) {
+          logger.warn("Broadcast summary could not be delivered:", e?.message);
+        }
+      })().catch((e) => logger.error("Broadcast failed:", e?.message));
+      return;
+    }
+
     // ── .togroupstatus — push a replied message or media to the group status ─
     // WhatsApp's own "status to group" is a message of type
     // `groupStatusMessageV2` whose payload is the status content, so this is a
