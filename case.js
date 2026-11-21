@@ -5401,33 +5401,93 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         fromMe: false,
       };
 
+      // Failure has to be attributable: "it only works for text" is exactly what
+      // a collapsed error message produces. Each stage writes a trace line, so
+      // the next attempt says whether it died in the download, the upload or the
+      // relay instead of leaving the answer to guesswork.
+      const _togsTrace = (payload) => {
+        try {
+          fs.appendFileSync(
+            "./database/dispatch.log",
+            JSON.stringify({ at: new Date().toISOString(), stage: "togroupstatus", bot: botPhoneNum, chat: sender, ...payload }) + "\n"
+          );
+        } catch (e) {}
+      };
+
       let _inner = null;
       try {
         if (_desc.media) {
           const _cached = _quoteCtx.stanzaId ? findCachedAntiDeleteMessage(_key) : null;
-          const _source = _cached?.msgObj || _quoted;
-          const _mediaNode = (_source[_desc.type] || _quoted[_desc.type] || {});
-          const _buffer = await downloadMediaMessage(
-            { key: _key, message: _source },
-            "buffer",
-            {},
-            { logger: pino({ level: "silent" }), reuploadRequest: mzazi.updateMediaMessage }
-          );
-          const _upload = (mediaObject) => prepareWAMessageMedia(mediaObject, { upload: mzazi.waUploadToServer });
-          const _prepared = _desc.type === "imageMessage"
-            ? await _upload({ image: _buffer })
-            : (_desc.type === "videoMessage" || _desc.type === "ptvMessage")
-              ? await _upload({ video: _buffer })
-              : _desc.type === "audioMessage"
-                ? await _upload({ audio: _buffer, mimetype: _mediaNode.mimetype || "audio/mp4", ptt: !!_mediaNode.ptt })
-                : _desc.type === "stickerMessage"
-                  ? await _upload({ sticker: _buffer })
-                  : await _upload({
-                    document: _buffer,
-                    mimetype: _mediaNode.mimetype || "application/octet-stream",
-                    fileName: _mediaNode.fileName || "status_file",
-                  });
-          _inner = { ..._prepared };
+          const _sources = [_cached?.msgObj, _quoted].filter(Boolean);
+          const _hasKeys = (src) => {
+            const node = (src && src[_desc.type]) || {};
+            return !!(node.mediaKey || node.fileEncSha256 || node.url);
+          };
+          const _downloadable = _sources.find(_hasKeys);
+          if (!_downloadable) {
+            throw new Error(
+              "WhatsApp sent only a preview of that media, so there is nothing to re-send. Reply to the original message rather than a forward of it"
+            );
+          }
+
+          // Two candidate sources (the cached original, then the quote) and a
+          // reupload request: the URL in a quote stub expires, and the cache is
+          // the only place the keys survive a view-once.
+          let _buffer = null;
+          let _downloadError = null;
+          for (const _src of [_downloadable, ..._sources.filter((x) => x !== _downloadable)]) {
+            try {
+              const _attempt = await downloadMediaMessage(
+                { key: _key, message: _src },
+                "buffer",
+                {},
+                { logger: pino({ level: "silent" }), reuploadRequest: mzazi.updateMediaMessage }
+              );
+              if (_attempt?.length) { _buffer = _attempt; break; }
+            } catch (e) { _downloadError = e; }
+          }
+          if (!_buffer?.length) {
+            throw new Error(`could not download the media (${_downloadError?.message || "no bytes returned"})`);
+          }
+
+          const _mediaNode = _downloadable[_desc.type] || {};
+          // The uploader must be called as a method: passing `waUploadToServer`
+          // detached loses its `this`, which is the difference between an
+          // uploaded status and a rejected one.
+          const _upload = (mediaObject) => prepareWAMessageMedia(mediaObject, {
+            upload: (content) => mzazi.waUploadToServer(content),
+          });
+
+          let _prepared = null;
+          let _prepareError = null;
+          try {
+            _prepared = _desc.type === "imageMessage"
+              ? await _upload({ image: _buffer, mimetype: _mediaNode.mimetype || "image/jpeg" })
+              : (_desc.type === "videoMessage" || _desc.type === "ptvMessage")
+                ? await _upload({ video: _buffer, mimetype: _mediaNode.mimetype || "video/mp4" })
+                : _desc.type === "audioMessage"
+                  ? await _upload({ audio: _buffer, mimetype: _mediaNode.mimetype || "audio/mp4", ptt: !!_mediaNode.ptt })
+                  : _desc.type === "stickerMessage"
+                    ? await _upload({ sticker: _buffer, mimetype: "image/webp" })
+                    : await _upload({
+                      document: _buffer,
+                      mimetype: _mediaNode.mimetype || "application/octet-stream",
+                      fileName: _mediaNode.fileName || "status_file",
+                    });
+          } catch (prepareError) {
+            _prepareError = prepareError;
+          }
+
+          if (_prepared && Object.keys(_prepared).length) {
+            _inner = { ..._prepared };
+          } else {
+            // Second route: relay the ORIGINAL media node untouched. It still
+            // carries url + mediaKey, which is all a recipient needs to fetch and
+            // decrypt it — no re-upload required. Slower to render for WhatsApp,
+            // but it beats refusing a status because a transcode failed.
+            _togsTrace({ ok: false, where: "prepare", error: _prepareError?.message || "empty result", fallingBack: "original-node" });
+            _inner = { [_desc.type]: { ..._mediaNode } };
+          }
           // Only the three captionable types accept one; a sticker or a voice
           // note with a caption field would be rejected by the server.
           for (const nodeKey of ["imageMessage", "videoMessage", "documentMessage"]) {
@@ -5437,7 +5497,12 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
           _inner = { extendedTextMessage: { text: _caption || _desc.text || " " } };
         }
       } catch (buildError) {
-        return mzazireply(`❌ *Group status failed:* could not prepare that ${_desc.label.toLowerCase()} — ${buildError?.message || "unknown error"}`);
+        _togsTrace({ ok: false, where: "build", type: _desc.type, error: buildError?.message });
+        logger.warn("toGroupStatus build failed:", buildError?.message);
+        return mzazireply(
+          `❌ *Group status failed:* ${_desc.label.toLowerCase()} could not be prepared — ` +
+          `${buildError?.message || "unknown error"}`
+        );
       }
 
       // Two field names exist in the protocol: `groupStatusMessageV2` (current)
@@ -5457,12 +5522,14 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
         } catch (firstError) {
           await _relay("groupStatusMessage");
         }
+        _togsTrace({ ok: true, type: _desc.type, caption: (_caption || "").slice(0, 60) });
         return mzazireply(
           `✅ *Pushed to group status*\n\n` +
           `📎 ${_desc.label}${_caption ? `\n💬 ${_caption.slice(0, 120)}` : ""}\n\n` +
           `_Everyone in this group can see it on the group's status now._`
         );
       } catch (relayError) {
+        _togsTrace({ ok: false, where: "relay", type: _desc.type, error: relayError?.message });
         logger.error("toGroupStatus relay failed:", relayError?.message);
         return mzazireply(`❌ *Group status failed:* ${relayError?.message || "WhatsApp refused the status"}`);
       }
