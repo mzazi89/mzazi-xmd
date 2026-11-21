@@ -2734,7 +2734,22 @@ You:`.trim();
       if (_antiGsmMode && _antiGsmMode !== 'off' && _antiGsmMode !== false) {
         const _gsKey = groupStatusKey(message);
         if (_gsKey) {
-          await applyMode(_antiGsmMode, 'group status mentions');
+          // "delete" on its own means exactly that: the post disappears and
+          // nobody is named. Announcing a deletion in a group where the member
+          // did nothing else is noise, so the notice that applies to links does
+          // not apply here.
+          if (_antiGsmMode === 'delete') {
+            try {
+              await mzazi.sendMessage(sender, { delete: m.key });
+            } catch (e) {
+              logger.warn('AntiGroupStatus: delete failed:', e?.message);
+            }
+            logSystem(`AntiGroupStatus: removed a ${_gsKey} in ${sender}`);
+            return;
+          }
+          // warn / kick keep the shared pipeline, so the warning counter and the
+          // 3-strikes kick behave exactly like every other filter.
+          await applyMode(_antiGsmMode, 'group status posts');
           return;
         }
       }
@@ -5347,6 +5362,112 @@ mzazireply.plain = (teks, opts = {}) => mzazireply(teks, { ...opts, plain: true 
     // messageCache, so this reads from there first and treats the quote as a
     // fallback. If neither carries a download path, the phone is asked to
     // re-upload the media and the download is retried once.
+    // ── .togroupstatus — push a replied message or media to the group status ─
+    // WhatsApp's own "status to group" is a message of type
+    // `groupStatusMessageV2` whose payload is the status content, so this is a
+    // relay rather than a send: build the content, wrap it, relay it. Text goes
+    // as extended text; media is downloaded from the quoted bubble (or from the
+    // cached copy, which is the only place the keys still exist after a
+    // view-once) and re-uploaded through the socket's own uploader.
+    if (["togroupstatus", "groupstatus", "togs"].includes(command)) {
+      if (!isGroup) return mzazireply("🚫 Group only!");
+      if (!isAdmin && !isOwner) return mzazireply("🚫 Admins only!");
+
+      const _quoteCtx =
+        m.message?.extendedTextMessage?.contextInfo ||
+        m.message?.imageMessage?.contextInfo ||
+        m.message?.videoMessage?.contextInfo ||
+        m.message?.audioMessage?.contextInfo ||
+        m.message?.documentMessage?.contextInfo ||
+        m.message?.stickerMessage?.contextInfo ||
+        {};
+      const _quoted = _quoteCtx.quotedMessage ? unwrapMessage(_quoteCtx.quotedMessage) : null;
+
+      if (!_quoted || !Object.keys(_quoted).length) {
+        return mzazireply(
+          `📌 *GROUP STATUS*\n\n` +
+          `Reply to a message, photo, video, voice note or sticker with ` +
+          `*${prefix}${command}* and I will push it to this group's status.\n\n` +
+          `_Add words after the command to caption it:_\n${prefix}${command} New offer inside 👀`
+        );
+      }
+
+      const _desc = describeDeletedMessage(_quoted);
+      const _caption = args.join(" ").trim() || _desc.text || "";
+      const _key = {
+        remoteJid: sender,
+        id: _quoteCtx.stanzaId || "",
+        participant: _quoteCtx.participant || m.key?.participant,
+        fromMe: false,
+      };
+
+      let _inner = null;
+      try {
+        if (_desc.media) {
+          const _cached = _quoteCtx.stanzaId ? findCachedAntiDeleteMessage(_key) : null;
+          const _source = _cached?.msgObj || _quoted;
+          const _mediaNode = (_source[_desc.type] || _quoted[_desc.type] || {});
+          const _buffer = await downloadMediaMessage(
+            { key: _key, message: _source },
+            "buffer",
+            {},
+            { logger: pino({ level: "silent" }), reuploadRequest: mzazi.updateMediaMessage }
+          );
+          const _upload = (mediaObject) => prepareWAMessageMedia(mediaObject, { upload: mzazi.waUploadToServer });
+          const _prepared = _desc.type === "imageMessage"
+            ? await _upload({ image: _buffer })
+            : (_desc.type === "videoMessage" || _desc.type === "ptvMessage")
+              ? await _upload({ video: _buffer })
+              : _desc.type === "audioMessage"
+                ? await _upload({ audio: _buffer, mimetype: _mediaNode.mimetype || "audio/mp4", ptt: !!_mediaNode.ptt })
+                : _desc.type === "stickerMessage"
+                  ? await _upload({ sticker: _buffer })
+                  : await _upload({
+                    document: _buffer,
+                    mimetype: _mediaNode.mimetype || "application/octet-stream",
+                    fileName: _mediaNode.fileName || "status_file",
+                  });
+          _inner = { ..._prepared };
+          // Only the three captionable types accept one; a sticker or a voice
+          // note with a caption field would be rejected by the server.
+          for (const nodeKey of ["imageMessage", "videoMessage", "documentMessage"]) {
+            if (_caption && _inner[nodeKey]) _inner[nodeKey].caption = _caption;
+          }
+        } else {
+          _inner = { extendedTextMessage: { text: _caption || _desc.text || " " } };
+        }
+      } catch (buildError) {
+        return mzazireply(`❌ *Group status failed:* could not prepare that ${_desc.label.toLowerCase()} — ${buildError?.message || "unknown error"}`);
+      }
+
+      // Two field names exist in the protocol: `groupStatusMessageV2` (current)
+      // and `groupStatusMessage` (older clients). Try the current one, fall back
+      // once — a wrong guess here is the difference between a status and a
+      // silent failure.
+      // No explicit message id: the socket generates one, and inventing one
+      // here risks a duplicate id inside the same chat.
+      const _relay = async (field) => mzazi.relayMessage(
+        sender,
+        { [field]: { message: _inner } },
+        {}
+      );
+      try {
+        try {
+          await _relay("groupStatusMessageV2");
+        } catch (firstError) {
+          await _relay("groupStatusMessage");
+        }
+        return mzazireply(
+          `✅ *Pushed to group status*\n\n` +
+          `📎 ${_desc.label}${_caption ? `\n💬 ${_caption.slice(0, 120)}` : ""}\n\n` +
+          `_Everyone in this group can see it on the group's status now._`
+        );
+      } catch (relayError) {
+        logger.error("toGroupStatus relay failed:", relayError?.message);
+        return mzazireply(`❌ *Group status failed:* ${relayError?.message || "WhatsApp refused the status"}`);
+      }
+    }
+
     // ── ANTI GROUP STATUS MENTION ──────────────────────────────────────────
     // Native on purpose: the filter it switches on lives in this file too, so
     // the toggle and the enforcement ship together and cannot drift into the
